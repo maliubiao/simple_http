@@ -1,0 +1,795 @@
+import select
+import socket
+import os
+import pdb
+import errno 
+import io 
+import re 
+import fcntl 
+import signal
+import pwd
+import traceback
+import json
+import simple_http
+import simple_gzip
+
+from time import time 
+from simple_http import auto_content_type
+from simple_http import simple_post_decode
+from socket import inet_ntoa
+from struct import unpack
+from cStringIO import StringIO
+from errno import EAGAIN
+from re import match as _match
+
+#consts 
+cons = {}
+buf_queue = {} 
+applications = {}
+forbidden = {} 
+statics = {}
+epm = None
+sock = None
+initialized = False
+stop = False
+running = False
+_accept = None
+_poll = None
+_register = None 
+sock_fd = None
+data_fd = None 
+data_fifo = None
+handler = None 
+
+MAX_LISTEN  = 10240
+KEEP_ALIVE = 60 
+BODY_MAXLEN = 1*1024*1024
+gzip_write = simple_gzip.write
+
+NONBLOCKING_LOG = "nonblocking.log" 
+log_file = None 
+LOG_ERR = 0x1 << 1
+LOG_WARN = 0x1 << 2
+LOG_INFO = 0x1 << 3
+LOG_ALL = LOG_ERR | LOG_WARN | LOG_INFO
+log_level = LOG_ALL
+HTTP_LEVEL = 0x1 << 1
+SERVER_LEVEL = 0x1 << 2
+
+LOG_BUFFER_SIZE = 0
+log_buffer = None
+
+STATICS_PRELOAD = 0x1 << 1
+STATICS_MMAP = 0x1 << 2
+STATICS_NORMAL = 0x1 << 3
+
+COMMAND_IP_FORBIDDEN = 0x1 << 1
+COMMAND_FLUSH_LOG = 0x1 << 2 
+
+#http consts
+HEADER_END = simple_http.HEADER_END
+NEWLINE = simple_http.NEWLINE 
+HTTP_VERSION = simple_http.HTTP_VERSION
+header_decode = simple_http.header_decode
+
+site_allowed = [
+        "localhost:80",
+        "128.0.0.1:80"
+        ]
+
+refer_allowed = [
+        "http://localhost:80",
+        "http://127.0.0.1:80"
+        ]
+
+#CSP header
+source_domain_allowed = {
+        "default-src": ["http://localhost:80",
+        "http://127.0.0.1:80"]
+        }
+
+csp_directive = ["default-src", "frame-src", "img-src", "script-src", "style-src", "media-src", "object-src", "connect-src"]
+
+#anti XSRF
+default_header = {
+    "Content-Type": "text/html",
+    "X-Frame-Options": "SAMEORIGIN",
+    "X-XSS-Protection": "1; mode=block",
+    "X-Content-Type-Options": "nosniff",
+    "X-Content-Security-Policy": "default-src self; frame-src: self; img-src self; script-src self; style-src self; media-src self; object-src self; connect-src:self"
+    }
+
+def set_domain_allowed(policy):
+    if not isinstance(policy, dict):
+        raise Exception("domains must be a dict")
+    policy_buffer = StringIO() 
+    for i in policy:    
+        if i in csp_directive:
+            policy_buffer.write(i + "\x20")
+            for j in policy[i]:
+                if "\x20" in j:
+                    raise Exception("space is not allowed in domain")
+                policy_buffer.write(j+"\x20")
+            policy_buffer.write(";") 
+    default_header["X-Content-Security-Policy"] = policy_buffer.getvalue()
+    policy_buffer.close()
+
+def set_refer_allowed(refers):
+    global refer_allowed 
+    if not isinstance(refers, list):
+        raise Exception("refers must be a list") 
+    for i in refers:
+        if "\x20" in i:
+            raise Exception("space is not allowed in refer")
+    refer_allowed = refers
+
+#socket consts
+_socket = socket.socket 
+AF_INET = socket.AF_INET
+SOCK_STREAM = socket.SOCK_STREAM
+SOL_SOCKET = socket.SOL_SOCKET
+SO_REUSEADDR = socket.SO_REUSEADDR
+#epoll consts
+EPOLLIN = select.EPOLLIN
+EPOLLOUT = select.EPOLLOUT
+EPOLLHUP = select.EPOLLHUP
+EPOLLET = select.EPOLLET
+EPOLLERR = select.EPOLLERR
+#fcntl consts
+_fcntl = fcntl.fcntl
+F_SETFL = fcntl.F_SETFL
+O_NONBLOCK = os.O_NONBLOCK
+
+#os consts
+_read = os.read
+_write = os.write 
+_close = os.close
+
+#file permisiion bits
+permX = 0b001
+permW = 0b010
+permR = 0b100
+
+
+def sigint_handler(signum, frame):
+    poll_close()
+    exit(0)
+
+def sigtimer_handler(signum, frame):
+    #clean keep-alive every KEEP_ALIVE seconds
+    now = time() 
+    for fd in buf_queue.keys(): 
+        if now > buf_queue[fd][-4]: 
+            clean_queue(fd) 
+
+def run_as_user(user):
+    try:
+        db = pwd.getpwnam(user)
+    except KeyError:
+        raise Exception("user doesn't exists") 
+    try:
+        os.setgid(db.pw_gid)
+    except OSError:        
+        raise Exception("change gid failed") 
+    try:
+        os.setuid(db.pw_uid)
+    except OSError:
+        raise Exception("change uid failed")
+
+def daemonize():
+    try:
+        status = os.fork()
+    except OSError as e:
+        print e
+    if not status: 
+        os.setsid()
+        os.close(0)
+        os.close(1)
+        os.close(2)
+        stdin = open("/dev/null", "r")
+        os.dup2(log_file.fileno(), 1)
+        os.dup2(log_file.fileno(), 2)
+        try:
+            status2 = os.fork()
+        except OSError as e:
+            print e
+        if status2:
+            exit()
+    else:
+        exit()        
+
+def server_config():
+    global log_file, log_buffer 
+    global handler, data_fd, data_fifo
+    #SIGINT clean up and quit
+    signal.signal(signal.SIGINT, sigint_handler) 
+    #keep alive timer
+    signal.signal(signal.SIGALRM, sigtimer_handler)
+    signal.setitimer(signal.ITIMER_REAL, KEEP_ALIVE, KEEP_ALIVE)
+    #data channel
+    data_fifo = "nonblocking_pid_%d.fifo" % os.getpid()
+    os.mkfifo(data_fifo , 0666) 
+    f = open(data_fifo, "r+")
+    data_fd = os.dup(f.fileno())
+    f.close()
+    #log
+    if os.path.exists(NONBLOCKING_LOG): 
+        log_file = open(NONBLOCKING_LOG, "a+")
+    else:
+        log_file = open(NONBLOCKING_LOG, "w")
+    if LOG_BUFFER_SIZE:
+        log_buffer = StringIO()
+    handler = handle_http_request
+
+def poll_open(connection):
+    global epm, sock, sock_fd
+    global _accept, _poll, _register 
+    #epoll and socket
+    epm = select.epoll()
+    sock = _socket(AF_INET, SOCK_STREAM)
+    sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+    _accept = sock.accept
+    sock_fd = sock.fileno() 
+    epm.register(sock_fd, EPOLLIN|EPOLLERR|EPOLLHUP)
+    sock.bind(connection)
+    sock.listen(MAX_LISTEN)
+    _poll = epm.poll
+    _register = epm.register 
+    _register(data_fd, EPOLLIN|EPOLLERR) 
+
+def poll_close(): 
+    global epm, sock 
+    if log_buffer: 
+        log_file.write(log_buffer.getvalue())
+        log_buffer.close()
+    try:
+        log_file.close()
+    except:
+        pass 
+    epm.close()
+    sock.close() 
+    try:
+        epm.unregister(data_fd) 
+        _close(f) 
+    except:
+        pass
+    try:
+        os.remove(data_fifo)
+    except:
+        pass
+
+def handle_new_connection(connection):
+    con, addr = connection
+    #don't accept ip in forbidden
+    if addr[0] in forbidden:
+        try:
+            con.shutdown(socket.SHUT_RDWR)
+        except:
+            pass
+        con.close()
+        return
+    incoming_fd = con.fileno()
+    _register(incoming_fd, EPOLLIN|EPOLLOUT|EPOLLET|EPOLLERR|EPOLLHUP) 
+    _fcntl(incoming_fd, F_SETFL, O_NONBLOCK)
+    cons[incoming_fd] = (con, addr)
+
+def poll_wait(): 
+    request_handler = handler
+    while True:
+        try:
+            event_pairs = _poll() 
+        except Exception as e:
+            if getattr(e, "errno", None) != errno.EINTR: 
+                raise e
+            continue
+        for fd, events in event_pairs:
+            if fd == sock_fd: 
+                if events & (EPOLLERR | EPOLLHUP):
+                    raise Exception("main socket error") 
+                handle_new_connection(_accept())
+                continue 
+            try: 
+                request_handler(fd, events) 
+            except Exception, err:
+                if log_level & LOG_ERR:
+                    if log_buffer:
+                        log_buffer.write(json.dumps(traceback.extract_stack())+"\n") 
+                        if log_buffer.tell() >= LOG_BUFFER_SIZE:
+                            log_file.write(log_buffer.getvalue())
+                            log_buffer.truncate(0) 
+                    else:
+                        log_file.write(json.dumps(traceback.extract_stack())+"\n")
+                if fd in cons:    
+                    handle_server_error(fd, err.message)
+            
+def clean_queue(fd): 
+    if fd not in cons:
+        epm.unregister(fd)
+        _close(fd)
+    con = cons[fd][0]
+    #maybe tcp RST
+    try:
+        con.shutdown(socket.SHUT_RDWR) 
+    except socket.error, err: 
+        print "clean_queue, socket shutdown failed", err
+    #release connection
+    con.close() 
+    #remove it from queue
+    del cons[fd]
+    #delete it's context
+    del buf_queue[fd] 
+    #remove tits fd from epoll
+    try:
+        epm.unregister(fd)
+    except OSError, err:
+        print "clean_queue, epoll unresiger failed,", err 
+
+def install(app):
+    if not isinstance(app, dict):
+        raise Exception("%s should be a dictionary" % app)
+    if not app.get("url"):
+        raise Exception("no url specified in %s" % app)
+    #precompiled regex
+    applications[re.compile(app["url"])] = app    
+    
+def uninstall(url):    
+    if not isinstance(url, str) and not isinstance(url, unicode):
+        raise Exception("url should be a string")
+    if not applications.get(url):
+        del applications[url]
+
+def scan_statics(topdir, path, mode): 
+    if path.startswith("."):
+        raise Exception("absolute path only") 
+    for d, subs, files in os.walk(path): 
+        for f in files: 
+            if mode & STATICS_PRELOAD:
+                itsname = "%s/%s" % (d, f)
+                itsfile = open(itsname, "r") 
+                yield "/%s/%s" % (d.replace(path, topdir), f), f, itsfile.read()
+                itsfile.close()
+            elif mode & STATICS_MMAP:
+                itsname = "%s/%s" % (d, f)
+                itsfile = open(itsname, "r+")
+                itsmap = mmap.mmap(itsname.fileno(), 0, mmap.MAP_SHARED)
+                itsfile.close() 
+                yield "/%s/%s" % (d.replace(path, topdir), f), f, itsmap
+            elif mode & STATICS_NORMAL:
+                yield "/%s/%s" % (d.replace(path, topdir), f), f, None
+
+def install_statics(topdir, path, mode): 
+    for url, name, value in scan_statics(topdir, path, mode):
+        if url not in statics: 
+            statics[url] = (mode, name, value)
+        else:
+            raise Exception("name collsion: %s" % name)
+
+def uninstall_statics(topdir):
+    for k in statics.keys():
+        if k.startswith(topdir):
+            del statics[k]
+
+def build_request(header, cookie):
+    request = {}
+    request["REQUEST_METHOD"] = header.get("method").lower()
+    path_dict = simple_http.url_decode(header.get("path"))
+    request["QUERY_STRING"] = path_dict.get("query")
+    request["PATH_INFO"] = path_dict.get("path") 
+    request["header"] = header
+    request["cookie"] = cookie 
+    return request
+
+#server internal error
+def handle_server_error(fd, code): 
+    error_header = default_header.copy() 
+    if isinstance(code, int):
+        error_header["status"] = code
+    else:
+        error_header["status"] = 500
+    response = {}
+    if code == 500:
+        response.update({
+                "header": error_header,
+                "stream": ""
+                })
+    elif code == 503:
+        response.update({
+            "header": error_header,
+            "stream": ""
+            })
+    elif code == 400:
+        response.update({
+                "header": error_header,
+                "stream": ""
+                }) 
+    else:
+        response.update({
+            "header": error_header,
+            "stream": ""
+            })
+    outgoing_buf = StringIO()
+    write_response(response, outgoing_buf) 
+    try:
+        cons[fd][0].sendall(outgoing_buf.getvalue())
+    except socket.error:
+        pass
+    outgoing_buf.close()
+    clean_queue(fd)
+
+def handle_http_error(request, response):
+    code = response["header"]["status"] 
+    if code == 400: 
+        response.update({ 
+            "stream": "Page Not Found"
+            }) 
+    if log_level & LOG_INFO:        
+        if log_buffer:
+            log_buffer.write(json.dumps(request)+"\n") 
+            if log_buffer.tell() >= LOG_BUFFER_SIZE:
+                log_file.write(log_buffer.getvalue())
+                log_buffer.truncate(0)
+        else: 
+            log_file.write(json.dumps(request)+"\n")
+
+def static_handler(request, response): 
+    path = request["PATH_INFO"]
+    res = statics[path]
+    mode = res[0]
+    name = res[1] 
+    #raw string
+    if mode == STATICS_PRELOAD:
+        response.update({
+                "header": {
+                    "status": 200,
+                    "Content-Type": auto_content_type(name)
+                    },
+                "stream": res[2]
+                })
+    #file
+    elif mode == STATICS_NORMAL: 
+        f = open(name, "r")
+        response.update({
+            "header": {
+                "status": 200,
+                "Content-Type": auto_content_type(name)
+                },
+            "stream": f.read()
+            })
+        f.close() 
+    elif pathtype == STATICS_MMAP:
+        itsmap = res[2]
+        response.update({
+                "header": {
+                    "status": 200,
+                    "Content-Type": auto_content_type(name)
+                    },
+                "stream": itsmap.read()
+                }) 
+        itsmap.seek(0, io.SEEK_SET) 
+
+def url_handler(request, response): 
+    #match url
+    url = request["PATH_INFO"] 
+    method = request["REQUEST_METHOD"]
+    response["header"] = default_header.copy()
+    match = False 
+    for pattern in applications:
+        if pattern.match(url):
+            match = True
+            try:
+                applications[pattern][method](request, response)
+            except Exception, err: 
+                if isinstance(err.messge, tuple):
+                    if err[0] == HTTP_LEVEL:
+                        handle_http_error(request, response)
+                        match = True
+                    if err[0] == SERVER_LEVEL:
+                        raise err
+                else:
+                    raise err
+            break 
+    if not match:
+        #maybe statics
+        if url in statics:
+            match = True 
+            try:
+                static_handler(request, response)
+            except Exception, err: 
+                raise err
+    #application error
+    if not match: 
+        response.update({
+            "header": {
+                "status": 400
+                },
+            "stream": ""
+            })
+        handle_http_error(request, response) 
+    return response
+
+def write_response(response, outgoing_buf): 
+    content_buf = StringIO()
+    #gzip stream
+    header = response["header"] 
+    if header.get("Content-Encoding"):
+        if "Vary" in header:
+            header["Vary"] += ", Accept-Encoding"
+        else:
+            header["Vary"] = "Accept-Encoding"
+        if "gzip" in header["Content-Encoding"]:   
+            gzip_write(response["stream"], content_buf) 
+            header["Content-Length"] = str(content_buf.tell()) 
+    else: 
+        content_buf.write(response["stream"]) 
+        if not header.get("Content-Length"):
+            header["Content-Length"] = content_buf.tell() 
+    #add cookie to header 
+    if "cookie" in response:
+        cookie = simple_http.server_cookie_encode(response["cookie"])
+        header["Set-Cookie"] = cookie 
+    data = simple_http.header_encode(header, False) 
+    #write header and content 
+    outgoing_buf.write(data)
+    outgoing_buf.write(NEWLINE) 
+    outgoing_buf.write(content_buf.getvalue()) 
+    content_buf.close()
+
+def handle_http_request(fd, events): 
+    #close connection on error or hup 
+    if events & (EPOLLERR|EPOLLHUP): 
+        clean_queue(fd)
+        return 
+    #maybe our data_fd
+    if fd == data_fd:
+        if events & EPOLLIN: 
+            command = ord(_read(fd, 1))
+            #add forbidden ip 
+            pdb.set_trace()
+            if command & COMMAND_IP_FORBIDDEN:
+                try:
+                    many = unpack("I", _read(fd, 4))[0] 
+                    for i in range(many):
+                        ipstr = _read(fd, 4)
+                        forbidden[inet_ntoa(ipstr)] = None
+                    print forbidden
+                except Exception, err: 
+                    if log_level & LOG_WARN:
+                        log_file.write(json.dumps(err.args)+"\n")
+                    return
+                return 
+            if command & COMMAND_FLUSH_LOG: 
+                if log_buffer:
+                    log_file.write(log_buffer.getvalue()) 
+                    log_buffer.truncate(0)
+                log_file.flush()
+                return
+        else:            
+            return 
+    con, addr = cons[fd] 
+    #if we have accepted tits ip, close connection.
+    if addr[0] in forbidden:
+        raise Exception(403)
+    #default Connection: Close
+    close_request = True
+    #http request context queue 
+    if fd not in buf_queue:
+        incoming_buf = StringIO()
+        outgoing_buf = StringIO()
+        left = 0 
+        write_later = 0
+        post_type = 0
+        buf_queue[fd] = [incoming_buf, outgoing_buf, None, None, False, time()+KEEP_ALIVE, 0, 0, 0] 
+    else: 
+        incoming_buf, outgoing_buf, header, cookie, close_request, alive, post_type, write_later, left = buf_queue[fd] 
+        #update keep-alive time 
+        buf_queue[fd][-4] = time() + KEEP_ALIVE 
+    #read all we got 
+    if events & EPOLLIN: 
+        #with write_later, we have to deny new request
+        if write_later:
+            raise Exception(503)
+        while True: 
+            try:
+                data = _read(fd, 4096) 
+                #tcp FIN
+                if not data: 
+                    clean_queue(fd)
+                    return
+                incoming_buf.write(data)
+            except OSError as e: 
+                if getattr(e, "errno", None) != EAGAIN:
+                    raise e 
+                break 
+    #maybe heavy traffic 
+    if events & EPOLLOUT:
+        if write_later: 
+            #try 3 times
+            if write_later > 2:
+                raise Exception(500)
+            #maybe avavible 
+            try:
+                _write(fd, outgoing_buf.getvalue())
+            except OSError as e:
+                if e.errno != EAGAIN:
+                    raise e
+                #still unavaiable 
+                #add write_later
+                buf_queue[fd][-2] += 1
+                return 
+            #finally
+            if close_reqest:
+                incoming_buf.close()
+                outgoing_buf.close()
+                clean_queue(fd)
+                return
+            else:
+                incoming_buf.truncate(0)
+                outgoing_buf.truncate(0) 
+                #write_later = 0
+                buf_queue[fd][-2] = 0
+        else:
+            #EPOLLOUT without EPOLLIN, ignore
+            if not events & EPOLLIN:
+                return 
+    #handle this chunk 
+    if not left: 
+        data = incoming_buf.getvalue()
+        header_end = data.find(HEADER_END)            
+        if header_end < 0:
+            #max header length
+            incoming_buf.close()
+            raise Exception(503)
+        try:
+            header, cookie = header_decode(data[:header_end], False) 
+        except:
+            raise Exception(400)
+        if header.get("Connection") == "keep-alive": 
+            close_reqest = False 
+        if header.get("method") == "GET": 
+            #build_request 
+            request = build_request(header, cookie) 
+            request["CLIENT"] = addr
+            request["fd"] = fd
+            #get response
+            response = {} 
+            response = url_handler(request, response) 
+            if close_request:
+                response["header"]["Connection"] = "close"
+            write_response(response, outgoing_buf)
+            #write response to network.
+            try:
+                _write(fd, outgoing_buf.getvalue())
+            except OSError as e:
+                if e.errno == EAGAIN:
+                    raise e
+                print "write later"
+                #write later
+                buf_queue[fd][-2] += 1 
+                return
+            if close_request:
+                incoming_buf.close()
+                outgoing_buf.close()
+                clean_queue(fd)
+                return
+            else:
+                incoming_buf.truncate(0)
+                outgoing_buf.truncate(0) 
+        elif header.get("method") == "POST": 
+            try:
+                content_length = int(header.get("Content-Length"))
+            except:
+                raise Exception(400)
+            incoming_buf.seek(0, io.SEEK_END)
+            left = incoming_buf.tell() - (header_end+4)
+            #remove header from post stream
+            incoming_buf.truncate(0)
+            incoming_buf.write(data[header_end+4:]) 
+            if incoming_buf.tell() > BODY_MAXLEN:
+                raise Exception(400)
+            if left < content_length: 
+                #wait request body
+                request = buf_queue[fd]
+                request[-1] = content_length - left 
+                request[2] = header
+                request[3] = cookie
+                request[4] = close_reqest
+                request[-3] = post_type
+            else: 
+                if "Content-Type" in header: 
+                    #form post 
+                    ct = header.get("Content-Type")
+                    if "w-form-u" in ct:
+                        post_type = 0 
+                    elif "t/form-d" in ct: 
+                        post_type = 1
+                    else:
+                        raise Exception(400)
+                else:
+                    raise Exception(400)  
+                if "Content-Length" not in header:
+                    raise Exception(400)   
+                #build request
+                request = build_request(header, cookie) 
+                request["CLIENT"] = addr
+                request["fd"] = fd
+                #handle request 
+                response = {}
+                if post_type == 0:
+                    if content_length: 
+                        request["stream"] = simple_post_decode(incoming_buf.getvalue())
+                    else:
+                        request["stream"] = {}
+                elif post_type == 1: 
+                    bend = ct.find("boundary")
+                    if bend < 0:
+                        raise Exception(400)
+                    else:
+                        boundary = ct[bend+9:]
+                    if content_length:
+                        request["stream"] = complex_post_decode(incoming_buf.getvalue(), boundary) 
+                    else:
+                        request["stream"] = {}
+                else:
+                    request["stream"] = {}
+                response = url_handler(request, response)
+                #write response to buffer
+                write_response(response, outgoing_buf)
+                #write response to network
+                try:
+                    _write(fd, outgoing_buf.getvalue())
+                except OSError as e:
+                    if e.errno == EAGAIN:
+                        raise e
+                    #write later
+                    print "write later"
+                    buf_queue[fd][-2] += 1
+                    return
+                if close_request:
+                    incoming_buf.close()
+                    outgoing_buf.close()
+                    clean_queue(fd)
+                    return
+                else:
+                    incoming_buf.truncate(0)
+                    outgoing_buf.truncate(0) 
+
+    else:       
+        #handle unfinished post
+        left = content_length - incoming_buf.seek(0, io.SEEK_END)
+        if incoming_buf.tell() > BODY_MAXLEN:
+            raise Exception(400)
+        if left > 0:
+            buf_queue[fd][-1] = left
+        else:
+            request = build_request(header, cookie) 
+            request["CLIENT"] = addr
+            request["fd"] = fd
+            if post_type == 0: 
+                request["stream"] = simple_post_decode(incoming_buf.getvalue())
+            elif post_type == 1: 
+                bend = ct.find("boundary")
+                if bend < 0:
+                    raise Exception(400)
+                else:
+                    boundary = ct[bend+9:]
+                request["stream"] = complex_post_decode(incoming_buf.getvalue(), boundary) 
+            else:
+                request["stream"] = {} 
+            response = {}
+            response = url_handler(request, response) 
+            write_response(response, outgoing_buf)
+            try:
+                _write(fd, outgoing_buf.getvalue())
+            except OSError as e:
+                if e.errno == EAGAIN:
+                    raise e
+                buf_queue[fd][-2] += 1
+                return
+            if close_request:
+                incoming_buf.close()
+                outgoing_buf.close()
+                clean_queue(fd)
+                return
+            else:
+                incoming_buf.truncate(0)
+                outgoing_buf.truncate(0) 
