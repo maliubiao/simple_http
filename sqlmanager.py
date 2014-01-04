@@ -83,7 +83,7 @@ home_application = {
         }
 
 nonblocking.install(home_application)
-nonblocking.install_statics("ui", os.path.abspath("./statics"), nonblocking.STATICS_PRELOAD)
+nonblocking.install_statics("ui", os.path.abspath("./statics"), nonblocking.STATICS_MMAP)
 
 try:
     _proc.setrlimit(_proc.RLIMIT_NOFILE, (10240, 20480))
@@ -92,11 +92,11 @@ except OSError, err:
     exit(0)
 
 signal.signal(signal.SIGUSR1, sigusr1_handler)
-nonblocking.log_level = nonblocking.LOG_ERR|nonblocking.LOG_WARN
+nonblocking.log_level = nonblocking.LOG_ALL
 
 nonblocking.run_as_user("richard_n")
 nonblocking.server_config() 
-nonblocking.daemonize() 
+#nonblocking.daemonize() 
 
 nonblocking.poll_open(("localhost", 8800)) 
 print "worker at %d on cpu %d" % (8800, 0)
