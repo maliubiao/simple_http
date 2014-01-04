@@ -10,7 +10,7 @@ import signal
 import pwd
 import mmap
 import traceback
-import json
+import ujson
 import simple_http
 import simple_gzip
 
@@ -291,54 +291,47 @@ def handle_new_connection(connection):
     _fcntl(incoming_fd, F_SETFL, O_NONBLOCK)
     cons[incoming_fd] = (con, addr)
 
-def keep_log(err):
-    args = err.args
-    final = None
-    if log_level & LOG_ERR: 
-        if len(args) != 3 and args[0] != HTTP_LEVEL:
-            final = str(args) 
-        if not final:
-            traceback = args[2]
-            final = "error: %s line: %d, file: %s" % (
-                    str(traceback[1]),
-                    traceback[2].tb_lineno,
-                    traceback[2].f_code.co_filename) 
-        if log_buffer:
-            log_buffer.write(final+"\n") 
-            if log_buffer.tell() >= LOG_BUFFER_SIZE:
-                log_file.write(log_buffer.getvalue()) 
-                log_buffer.truncate(0) 
-        else:
-            log_file.write(final+"\n")
-        log_file.flush()
-
-def handle_event_pairs(event_pairs): 
-    global sucess, failed 
-    for fd, events in event_pairs:
-        if fd == sock_fd: 
-            if events & (EPOLLERR | EPOLLHUP):
-                raise Exception("main socket error") 
-            handle_new_connection(_accept())
-            continue 
-        try: 
-            handle_http_request(fd, events) 
-            sucess += 1
-        except Exception, err: 
-            keep_log(err) 
-            if fd in cons:    
-                handle_server_error(fd, err.args)
-            failed += 1 
-
 
 def poll_wait(): 
+    global sucess, failed 
     while True:
         try:
             event_pairs = _poll(1) 
         except Exception as e: 
             print e
             continue 
-        if event_pairs: 
-            handle_event_pairs(event_pairs)
+        for fd, events in event_pairs:
+            if fd == sock_fd: 
+                if events & (EPOLLERR | EPOLLHUP):
+                    raise Exception("main socket error") 
+                handle_new_connection(_accept())
+                continue 
+            try: 
+                handle_http_request(fd, events) 
+                sucess += 1
+            except Exception, err: 
+                args = err.args
+                final = None
+                if log_level & LOG_ERR: 
+                    if len(args) != 3 and args[0] != HTTP_LEVEL:
+                        final = str(args) 
+                    if not final:
+                        traceback = args[2]
+                        final = "error: %s line: %d, file: %s" % (
+                                str(traceback[1]),
+                                traceback[2].tb_lineno,
+                                traceback[2].f_code.co_filename) 
+                    if log_buffer:
+                        log_buffer.write(final+"\n") 
+                        if log_buffer.tell() >= LOG_BUFFER_SIZE:
+                            log_file.write(log_buffer.getvalue()) 
+                            log_buffer.truncate(0) 
+                    else:
+                        log_file.write(final+"\n")
+                    log_file.flush() 
+                if fd in cons:    
+                    handle_server_error(fd, err.args)
+                failed += 1 
 
 def clean_queue(fd): 
     if fd not in cons:
@@ -411,16 +404,6 @@ def uninstall_statics(topdir):
         if k.startswith(topdir):
             del statics[k]
 
-def build_request(header, cookie):
-    request = {}
-    request["REQUEST_METHOD"] = header.get("method").lower()
-    path_dict = simple_http.url_decode(header.get("path"))
-    request["QUERY_STRING"] = path_dict.get("query")
-    request["PATH_INFO"] = path_dict.get("path") 
-    request["header"] = header
-    request["cookie"] = cookie 
-    return request
-
 #server internal error
 def handle_server_error(fd, args): 
     code = args[0] 
@@ -466,12 +449,12 @@ def handle_http_error(request, response):
             }) 
     if log_level & LOG_INFO:        
         if log_buffer:
-            log_buffer.write(json.dumps(request)+"\n") 
+            log_buffer.write(ujson.dumps(request)+"\n") 
             if log_buffer.tell() >= LOG_BUFFER_SIZE:
                 log_file.write(log_buffer.getvalue())
                 log_buffer.truncate(0)
         else: 
-            log_file.write(json.dumps(request)+"\n")
+            log_file.write(ujson.dumps(request)+"\n")
         log_file.flush()
 
 def static_handler(request, response): 
@@ -511,9 +494,9 @@ def static_handler(request, response):
         itsmap.seek(0, io.SEEK_SET) 
 
 def url_handler(request, response): 
-    #match url
-    url = request["PATH_INFO"] 
-    method = request["REQUEST_METHOD"]
+    header = request["header"]
+    url = header.get("path", "/")
+    method = header["method"]
     response["header"] = default_header.copy()
     match = False 
     for pattern in applications:
@@ -598,7 +581,7 @@ def handle_http_request(fd, events):
                         forbidden[inet_ntoa(ipstr)] = None 
                 except Exception, err: 
                     if log_level & LOG_WARN:
-                        log_file.write(json.dumps(err.args)+"\n")
+                        log_file.write(ujson.dumps(err.args)+"\n")
                     return
                 return 
             if command & COMMAND_FLUSH_LOG: 
@@ -695,8 +678,11 @@ def handle_http_request(fd, events):
             close_reqest = False 
         if header.get("method") == "GET": 
             #build_request 
-            request = build_request(header, cookie) 
-            request["CLIENT"] = addr
+            request = {
+                    "header": header,
+                    "cookie": cookie
+                    } 
+            request["client"] = addr
             request["fd"] = fd
             #get response
             response = {} 
@@ -762,8 +748,11 @@ def handle_http_request(fd, events):
                     raise Exception((HTTP_LEVEL,
                         400, None, "No Content-Length in header")) 
                 #build request
-                request = build_request(header, cookie) 
-                request["CLIENT"] = addr
+                request = {
+                        "header": header,
+                        "cookie": cookie
+                        }
+                request["client"] = addr
                 request["fd"] = fd
                 #handle request 
                 response = {}
@@ -816,8 +805,11 @@ def handle_http_request(fd, events):
         if left > 0:
             buf_queue[fd][-1] = left
         else:
-            request = build_request(header, cookie) 
-            request["CLIENT"] = addr
+            request = {
+                    "header": header,
+                    "cookie": cookie
+                    } 
+            request["client"] = addr
             request["fd"] = fd
             if post_type == 0: 
                 request["stream"] = simple_post_decode(incoming_buf.getvalue())
