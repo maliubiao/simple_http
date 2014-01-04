@@ -8,6 +8,7 @@ import re
 import fcntl 
 import signal
 import pwd
+import mmap
 import traceback
 import json
 import simple_http
@@ -21,6 +22,7 @@ from struct import unpack
 from cStringIO import StringIO
 from errno import EAGAIN
 from re import match as _match
+from sys import exc_info
 
 #consts 
 cons = {}
@@ -28,23 +30,20 @@ buf_queue = {}
 applications = {}
 forbidden = {} 
 statics = {}
+sucess = 0
+failed = 0
+
 epm = None
-sock = None
-initialized = False
-stop = False
-running = False
-_accept = None
-_poll = None
-_register = None 
+sock = None 
 sock_fd = None
 data_fd = None 
 data_fifo = None
-handler = None 
+
 
 MAX_LISTEN  = 10240
 KEEP_ALIVE = 60 
 BODY_MAXLEN = 1*1024*1024
-gzip_write = simple_gzip.write
+
 
 NONBLOCKING_LOG = "nonblocking.log" 
 log_file = None 
@@ -56,7 +55,7 @@ log_level = LOG_ALL
 HTTP_LEVEL = 0x1 << 1
 SERVER_LEVEL = 0x1 << 2
 
-LOG_BUFFER_SIZE = 0
+LOG_BUFFER_SIZE = 128*1024
 log_buffer = None
 
 STATICS_PRELOAD = 0x1 << 1
@@ -71,57 +70,7 @@ HEADER_END = simple_http.HEADER_END
 NEWLINE = simple_http.NEWLINE 
 HTTP_VERSION = simple_http.HTTP_VERSION
 header_decode = simple_http.header_decode
-
-site_allowed = [
-        "localhost:80",
-        "128.0.0.1:80"
-        ]
-
-refer_allowed = [
-        "http://localhost:80",
-        "http://127.0.0.1:80"
-        ]
-
-#CSP header
-source_domain_allowed = {
-        "default-src": ["http://localhost:80",
-        "http://127.0.0.1:80"]
-        }
-
-csp_directive = ["default-src", "frame-src", "img-src", "script-src", "style-src", "media-src", "object-src", "connect-src"]
-
-#anti XSRF
-default_header = {
-    "Content-Type": "text/html",
-    "X-Frame-Options": "SAMEORIGIN",
-    "X-XSS-Protection": "1; mode=block",
-    "X-Content-Type-Options": "nosniff",
-    "X-Content-Security-Policy": "default-src self; frame-src: self; img-src self; script-src self; style-src self; media-src self; object-src self; connect-src:self"
-    }
-
-def set_domain_allowed(policy):
-    if not isinstance(policy, dict):
-        raise Exception("domains must be a dict")
-    policy_buffer = StringIO() 
-    for i in policy:    
-        if i in csp_directive:
-            policy_buffer.write(i + "\x20")
-            for j in policy[i]:
-                if "\x20" in j:
-                    raise Exception("space is not allowed in domain")
-                policy_buffer.write(j+"\x20")
-            policy_buffer.write(";") 
-    default_header["X-Content-Security-Policy"] = policy_buffer.getvalue()
-    policy_buffer.close()
-
-def set_refer_allowed(refers):
-    global refer_allowed 
-    if not isinstance(refers, list):
-        raise Exception("refers must be a list") 
-    for i in refers:
-        if "\x20" in i:
-            raise Exception("space is not allowed in refer")
-    refer_allowed = refers
+gzip_write = simple_gzip.write
 
 #socket consts
 _socket = socket.socket 
@@ -150,6 +99,70 @@ permX = 0b001
 permW = 0b010
 permR = 0b100
 
+#alias
+_accept = None
+_poll = None
+_register = None 
+
+
+
+site_allowed = [
+        "localhost:80",
+        "128.0.0.1:80"
+        ]
+
+refer_allowed = [
+        "http://localhost:80",
+        "http://127.0.0.1:80"
+        ]
+
+#CSP header
+source_domain_allowed = {
+        "default-src": [
+            "http://localhost:80",
+            "http://127.0.0.1:80"]
+        }
+
+csp_directive = [
+    "default-src",
+    "frame-src",
+    "img-src",
+    "script-src",
+    "style-src",
+    "media-src",
+    "object-src",
+    "connect-src"]
+
+#anti XSRF
+default_header = {
+    "Content-Type": "text/html",
+    "X-Frame-Options": "SAMEORIGIN",
+    "X-XSS-Protection": "1; mode=block",
+    "X-Content-Type-Options": "nosniff",
+    "X-Content-Security-Policy": "default-src self; frame-src: self; img-src self; script-src self; style-src self; media-src self; object-src self; connect-src:self"
+    }
+
+def set_domain_allowed(policy):
+    if not isinstance(policy, dict):
+        raise Exception("domains must be a dict")
+    policy_buffer = StringIO() 
+    for rule in policy:    
+        if rule in csp_directive:
+            policy_buffer.write(i + "\x20")
+            for value in policy[rule]: 
+                policy_buffer.write(value+"\x20")
+            policy_buffer.write(";") 
+    default_header["X-Content-Security-Policy"] = policy_buffer.getvalue()
+    policy_buffer.close()
+
+def set_refer_allowed(refers):
+    global refer_allowed 
+    if not isinstance(refers, list):
+        raise Exception("refers must be a list") 
+    for i in refers:
+        if "\x20" in i:
+            raise Exception("space is not allowed in refer")
+    refer_allowed = refers
 
 def sigint_handler(signum, frame):
     poll_close()
@@ -161,6 +174,9 @@ def sigtimer_handler(signum, frame):
     for fd in buf_queue.keys(): 
         if now > buf_queue[fd][-4]: 
             clean_queue(fd) 
+
+def sigusr1_handler(signum, frame):
+    print "server status: sucess: %d, failed: %d" % (sucess, failed)
 
 def run_as_user(user):
     try:
@@ -200,12 +216,17 @@ def daemonize():
 
 def server_config():
     global log_file, log_buffer 
-    global handler, data_fd, data_fifo
+    global data_fd, data_fifo
     #SIGINT clean up and quit
     signal.signal(signal.SIGINT, sigint_handler) 
     #keep alive timer
     signal.signal(signal.SIGALRM, sigtimer_handler)
     signal.setitimer(signal.ITIMER_REAL, KEEP_ALIVE, KEEP_ALIVE)
+    #syscall interrupt: restart 
+    signal.siginterrupt(signal.SIGALRM, False)
+    signal.siginterrupt(signal.SIGUSR1, False)
+    #server status
+    signal.signal(signal.SIGUSR1, sigusr1_handler)
     #data channel
     data_fifo = "nonblocking_pid_%d.fifo" % os.getpid()
     os.mkfifo(data_fifo , 0666) 
@@ -219,7 +240,7 @@ def server_config():
         log_file = open(NONBLOCKING_LOG, "w")
     if LOG_BUFFER_SIZE:
         log_buffer = StringIO()
-    handler = handle_http_request
+    
 
 def poll_open(connection):
     global epm, sock, sock_fd
@@ -227,36 +248,32 @@ def poll_open(connection):
     #epoll and socket
     epm = select.epoll()
     sock = _socket(AF_INET, SOCK_STREAM)
-    sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
-    _accept = sock.accept
+    sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1) 
     sock_fd = sock.fileno() 
-    epm.register(sock_fd, EPOLLIN|EPOLLERR|EPOLLHUP)
     sock.bind(connection)
-    sock.listen(MAX_LISTEN)
+    sock.listen(MAX_LISTEN) 
+    epm.register(sock_fd, EPOLLIN | EPOLLERR | EPOLLHUP)
+    epm.register(data_fd, EPOLLIN|EPOLLERR) 
+    #alias
     _poll = epm.poll
     _register = epm.register 
-    _register(data_fd, EPOLLIN|EPOLLERR) 
+    _accept = sock.accept
+
 
 def poll_close(): 
     global epm, sock 
     if log_buffer: 
         log_file.write(log_buffer.getvalue())
-        log_buffer.close()
-    try:
-        log_file.close()
-    except:
-        pass 
+        log_buffer.close() 
+    log_file.close() 
     epm.close()
     sock.close() 
     try:
         epm.unregister(data_fd) 
         _close(f) 
     except:
-        pass
-    try:
-        os.remove(data_fifo)
-    except:
-        pass
+        pass 
+    os.remove(data_fifo)
 
 def handle_new_connection(connection):
     con, addr = connection
@@ -269,49 +286,70 @@ def handle_new_connection(connection):
         con.close()
         return
     incoming_fd = con.fileno()
-    _register(incoming_fd, EPOLLIN|EPOLLOUT|EPOLLET|EPOLLERR|EPOLLHUP) 
+    _register(incoming_fd,
+            EPOLLIN | EPOLLOUT |EPOLLET | EPOLLERR | EPOLLHUP) 
     _fcntl(incoming_fd, F_SETFL, O_NONBLOCK)
     cons[incoming_fd] = (con, addr)
 
+def keep_log(err):
+    args = err.args
+    final = None
+    if log_level & LOG_ERR: 
+        if len(args) != 3 and args[0] != HTTP_LEVEL:
+            final = str(args) 
+        if not final:
+            traceback = args[2]
+            final = "error: %s line: %d, file: %s" % (
+                    str(traceback[1]),
+                    traceback[2].tb_lineno,
+                    traceback[2].f_code.co_filename) 
+        if log_buffer:
+            log_buffer.write(final+"\n") 
+            if log_buffer.tell() >= LOG_BUFFER_SIZE:
+                log_file.write(log_buffer.getvalue()) 
+                log_buffer.truncate(0) 
+        else:
+            log_file.write(final+"\n")
+        log_file.flush()
+
+def handle_event_pairs(event_pairs): 
+    global sucess, failed 
+    for fd, events in event_pairs:
+        if fd == sock_fd: 
+            if events & (EPOLLERR | EPOLLHUP):
+                raise Exception("main socket error") 
+            handle_new_connection(_accept())
+            continue 
+        try: 
+            handle_http_request(fd, events) 
+            sucess += 1
+        except Exception, err: 
+            keep_log(err) 
+            if fd in cons:    
+                handle_server_error(fd, err.args)
+            failed += 1 
+
+
 def poll_wait(): 
-    request_handler = handler
     while True:
         try:
-            event_pairs = _poll() 
-        except Exception as e:
-            if getattr(e, "errno", None) != errno.EINTR: 
-                raise e
-            continue
-        for fd, events in event_pairs:
-            if fd == sock_fd: 
-                if events & (EPOLLERR | EPOLLHUP):
-                    raise Exception("main socket error") 
-                handle_new_connection(_accept())
-                continue 
-            try: 
-                request_handler(fd, events) 
-            except Exception, err:
-                if log_level & LOG_ERR:
-                    if log_buffer:
-                        log_buffer.write(json.dumps(traceback.extract_stack())+"\n") 
-                        if log_buffer.tell() >= LOG_BUFFER_SIZE:
-                            log_file.write(log_buffer.getvalue())
-                            log_buffer.truncate(0) 
-                    else:
-                        log_file.write(json.dumps(traceback.extract_stack())+"\n")
-                if fd in cons:    
-                    handle_server_error(fd, err.message)
-            
+            event_pairs = _poll(1) 
+        except Exception as e: 
+            print e
+            continue 
+        if event_pairs: 
+            handle_event_pairs(event_pairs)
+
 def clean_queue(fd): 
     if fd not in cons:
         epm.unregister(fd)
         _close(fd)
-    con = cons[fd][0]
+    con, addr= cons[fd]
     #maybe tcp RST
     try:
         con.shutdown(socket.SHUT_RDWR) 
     except socket.error, err: 
-        print "clean_queue, socket shutdown failed", err
+        print err
     #release connection
     con.close() 
     #remove it from queue
@@ -322,7 +360,7 @@ def clean_queue(fd):
     try:
         epm.unregister(fd)
     except OSError, err:
-        print "clean_queue, epoll unresiger failed,", err 
+        print err 
 
 def install(app):
     if not isinstance(app, dict):
@@ -346,21 +384,25 @@ def scan_statics(topdir, path, mode):
             if mode & STATICS_PRELOAD:
                 itsname = "%s/%s" % (d, f)
                 itsfile = open(itsname, "r") 
-                yield "/%s/%s" % (d.replace(path, topdir), f), f, itsfile.read()
+                yield ("/%s/%s" % (d.replace(path, topdir), f),
+                        f, itsfile.read(), None)
                 itsfile.close()
             elif mode & STATICS_MMAP:
                 itsname = "%s/%s" % (d, f)
                 itsfile = open(itsname, "r+")
-                itsmap = mmap.mmap(itsname.fileno(), 0, mmap.MAP_SHARED)
+                size = os.stat(itsname).st_size
+                itsmap = mmap.mmap(itsfile.fileno(), 0, mmap.MAP_SHARED)
                 itsfile.close() 
-                yield "/%s/%s" % (d.replace(path, topdir), f), f, itsmap
+                yield ("/%s/%s" % (d.replace(path, topdir), f),
+                        f, itsmap, size)
             elif mode & STATICS_NORMAL:
-                yield "/%s/%s" % (d.replace(path, topdir), f), f, None
+                yield ("/%s/%s" % (d.replace(path, topdir), f),
+                        f, None, None)
 
 def install_statics(topdir, path, mode): 
-    for url, name, value in scan_statics(topdir, path, mode):
+    for url, name, value, size in scan_statics(topdir, path, mode):
         if url not in statics: 
-            statics[url] = (mode, name, value)
+            statics[url] = (mode, name, value, size)
         else:
             raise Exception("name collsion: %s" % name)
 
@@ -380,12 +422,12 @@ def build_request(header, cookie):
     return request
 
 #server internal error
-def handle_server_error(fd, code): 
+def handle_server_error(fd, args): 
+    code = args[0] 
+    if (len(args) != 3) or (not isinstance(code, int)):
+        return
     error_header = default_header.copy() 
-    if isinstance(code, int):
-        error_header["status"] = code
-    else:
-        error_header["status"] = 500
+    error_header["status"] = code 
     response = {}
     if code == 500:
         response.update({
@@ -430,6 +472,7 @@ def handle_http_error(request, response):
                 log_buffer.truncate(0)
         else: 
             log_file.write(json.dumps(request)+"\n")
+        log_file.flush()
 
 def static_handler(request, response): 
     path = request["PATH_INFO"]
@@ -456,14 +499,14 @@ def static_handler(request, response):
             "stream": f.read()
             })
         f.close() 
-    elif pathtype == STATICS_MMAP:
+    elif mode == STATICS_MMAP:
         itsmap = res[2]
         response.update({
                 "header": {
                     "status": 200,
                     "Content-Type": auto_content_type(name)
                     },
-                "stream": itsmap.read()
+                "stream": itsmap.read(res[3])
                 }) 
         itsmap.seek(0, io.SEEK_SET) 
 
@@ -480,10 +523,11 @@ def url_handler(request, response):
                 applications[pattern][method](request, response)
             except Exception, err: 
                 if isinstance(err.messge, tuple):
-                    if err[0] == HTTP_LEVEL:
+                    level = err[0]
+                    if level == HTTP_LEVEL:
                         handle_http_error(request, response)
                         match = True
-                    if err[0] == SERVER_LEVEL:
+                    if level == SERVER_LEVEL:
                         raise err
                 else:
                     raise err
@@ -495,7 +539,8 @@ def url_handler(request, response):
             try:
                 static_handler(request, response)
             except Exception, err: 
-                raise err
+                raise ((SERVER_LEVEL,
+                    500, exc_info()))
     #application error
     if not match: 
         response.update({
@@ -550,8 +595,7 @@ def handle_http_request(fd, events):
                     many = unpack("I", _read(fd, 4))[0] 
                     for i in range(many):
                         ipstr = _read(fd, 4)
-                        forbidden[inet_ntoa(ipstr)] = None
-                    print forbidden
+                        forbidden[inet_ntoa(ipstr)] = None 
                 except Exception, err: 
                     if log_level & LOG_WARN:
                         log_file.write(json.dumps(err.args)+"\n")
@@ -568,7 +612,7 @@ def handle_http_request(fd, events):
     con, addr = cons[fd] 
     #if we have accepted tits ip, close connection.
     if addr[0] in forbidden:
-        raise Exception(403)
+        raise Exception((HTTP_LEVEL, 403, exc_info()))
     #default Connection: Close
     close_request = True
     #http request context queue 
@@ -587,7 +631,8 @@ def handle_http_request(fd, events):
     if events & EPOLLIN: 
         #with write_later, we have to deny new request
         if write_later:
-            raise Exception(503)
+            raise Exception((SERVER_LEVEL,
+                503, exc_info()))
         while True: 
             try:
                 data = _read(fd, 4096) 
@@ -597,7 +642,7 @@ def handle_http_request(fd, events):
                     return
                 incoming_buf.write(data)
             except OSError as e: 
-                if getattr(e, "errno", None) != EAGAIN:
+                if e.errno != EAGAIN:
                     raise e 
                 break 
     #maybe heavy traffic 
@@ -605,7 +650,8 @@ def handle_http_request(fd, events):
         if write_later: 
             #try 3 times
             if write_later > 2:
-                raise Exception(500)
+                raise Exception((SERVER_LEVEL,
+                    500, exc_info()))
             #maybe avavible 
             try:
                 _write(fd, outgoing_buf.getvalue())
@@ -638,11 +684,13 @@ def handle_http_request(fd, events):
         if header_end < 0:
             #max header length
             incoming_buf.close()
-            raise Exception(503)
+            raise Exception((SERVER_LEVEL,
+                503, exc_info()))
         try:
             header, cookie = header_decode(data[:header_end], False) 
         except:
-            raise Exception(400)
+            raise Exception((HTTP_LEVEL,
+                400, None, "unable to find header"))
         if header.get("Connection") == "keep-alive": 
             close_reqest = False 
         if header.get("method") == "GET": 
@@ -678,14 +726,16 @@ def handle_http_request(fd, events):
             try:
                 content_length = int(header.get("Content-Length"))
             except:
-                raise Exception(400)
+                raise Exception((HTTP_LEVEL,
+                    400, None, "no Content-Lenght in header"))
             incoming_buf.seek(0, io.SEEK_END)
             left = incoming_buf.tell() - (header_end+4)
             #remove header from post stream
             incoming_buf.truncate(0)
             incoming_buf.write(data[header_end+4:]) 
             if incoming_buf.tell() > BODY_MAXLEN:
-                raise Exception(400)
+                raise Exception((HTTP_LEVEL,
+                    400, None, "Body too big"))
             if left < content_length: 
                 #wait request body
                 request = buf_queue[fd]
@@ -698,16 +748,19 @@ def handle_http_request(fd, events):
                 if "Content-Type" in header: 
                     #form post 
                     ct = header.get("Content-Type")
-                    if "w-form-u" in ct:
+                    if "x-www-form-urlencoded" in ct:
                         post_type = 0 
-                    elif "t/form-d" in ct: 
+                    elif "multipart/form-data" in ct: 
                         post_type = 1
                     else:
-                        raise Exception(400)
+                        raise Exception((HTTP_LEVEL,
+                            400, None, "Unkown post type"))
                 else:
-                    raise Exception(400)  
+                    raise Exception((HTTP_LEVEL,
+                        400, None, "No Content-Type in header"))
                 if "Content-Length" not in header:
-                    raise Exception(400)   
+                    raise Exception((HTTP_LEVEL,
+                        400, None, "No Content-Length in header")) 
                 #build request
                 request = build_request(header, cookie) 
                 request["CLIENT"] = addr
@@ -722,7 +775,8 @@ def handle_http_request(fd, events):
                 elif post_type == 1: 
                     bend = ct.find("boundary")
                     if bend < 0:
-                        raise Exception(400)
+                        raise Exception((HTTP_LEVEL,
+                            400, None, "No boundary in multi-part post"))
                     else:
                         boundary = ct[bend+9:]
                     if content_length:
@@ -757,7 +811,8 @@ def handle_http_request(fd, events):
         #handle unfinished post
         left = content_length - incoming_buf.seek(0, io.SEEK_END)
         if incoming_buf.tell() > BODY_MAXLEN:
-            raise Exception(400)
+            raise Exception((HTTP_LEVEL,
+                400, None, "Body too big"))
         if left > 0:
             buf_queue[fd][-1] = left
         else:
@@ -769,7 +824,8 @@ def handle_http_request(fd, events):
             elif post_type == 1: 
                 bend = ct.find("boundary")
                 if bend < 0:
-                    raise Exception(400)
+                    raise Exception((HTTP_LEVEL, 400,
+                        None, "No boundary in multi-part post"))
                 else:
                     boundary = ct[bend+9:]
                 request["stream"] = complex_post_decode(incoming_buf.getvalue(), boundary) 
