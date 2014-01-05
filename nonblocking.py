@@ -313,7 +313,7 @@ def poll_wait():
                 args = err.args
                 final = None
                 if log_level & LOG_ERR: 
-                    if len(args) != 3 and args[0] != HTTP_LEVEL:
+                    if len(args) < 3:
                         final = str(args) 
                     if not final:
                         traceback = args[2]
@@ -329,8 +329,9 @@ def poll_wait():
                     else:
                         log_file.write(final+"\n")
                     log_file.flush() 
-                if fd in cons:    
-                    handle_server_error(fd, err.args)
+                if len(args) == 3:
+                    if fd in cons:    
+                        handle_server_error(fd, err.args)
                 failed += 1 
 
 def clean_queue(fd): 
@@ -410,7 +411,7 @@ def handle_server_error(fd, args):
     if (len(args) != 3) or (not isinstance(code, int)):
         return
     error_header = default_header.copy() 
-    error_header["status"] = code 
+    error_header["STATUS"] = code 
     response = {}
     if code == 500:
         response.update({
@@ -442,7 +443,7 @@ def handle_server_error(fd, args):
     clean_queue(fd)
 
 def handle_http_error(request, response):
-    code = response["header"]["status"] 
+    code = response["header"]["STATUS"] 
     if code == 400: 
         response.update({ 
             "stream": "Page Not Found"
@@ -458,7 +459,7 @@ def handle_http_error(request, response):
         log_file.flush()
 
 def static_handler(request, response): 
-    path = request["PATH_INFO"]
+    path = request["header"]["PATH"]
     res = statics[path]
     mode = res[0]
     name = res[1] 
@@ -466,7 +467,7 @@ def static_handler(request, response):
     if mode == STATICS_PRELOAD:
         response.update({
                 "header": {
-                    "status": 200,
+                    "STATUS": 200,
                     "Content-Type": auto_content_type(name)
                     },
                 "stream": res[2]
@@ -476,7 +477,7 @@ def static_handler(request, response):
         f = open(name, "r")
         response.update({
             "header": {
-                "status": 200,
+                "STATUS": 200,
                 "Content-Type": auto_content_type(name)
                 },
             "stream": f.read()
@@ -486,7 +487,7 @@ def static_handler(request, response):
         itsmap = res[2]
         response.update({
                 "header": {
-                    "status": 200,
+                    "STATUS": 200,
                     "Content-Type": auto_content_type(name)
                     },
                 "stream": itsmap.read(res[3])
@@ -495,25 +496,26 @@ def static_handler(request, response):
 
 def url_handler(request, response): 
     header = request["header"]
-    url = header.get("path", "/")
-    method = header["method"]
+    url = header.get("PATH", "/")
+    method = header["METHOD"]
     response["header"] = default_header.copy()
     match = False 
     for pattern in applications:
         if pattern.match(url):
             match = True
-            try:
-                applications[pattern][method](request, response)
+            app_dict = applications[pattern]
+            if method not in app_dict:
+                raise Exception((HTTP_LEVEL,
+                    400, None, "Method not allowed"))
+            try: 
+                app_dict[method](request, response)
             except Exception, err: 
-                if isinstance(err.messge, tuple):
-                    level = err[0]
-                    if level == HTTP_LEVEL:
-                        handle_http_error(request, response)
-                        match = True
-                    if level == SERVER_LEVEL:
-                        raise err
-                else:
+                if len(err.args) != 4:
                     raise err
+                level = err.args[0]
+                if level & HTTP_LEVEL:
+                    handle_http_error(request, response)
+                    match = True 
             break 
     if not match:
         #maybe statics
@@ -522,13 +524,16 @@ def url_handler(request, response):
             try:
                 static_handler(request, response)
             except Exception, err: 
-                raise ((SERVER_LEVEL,
-                    500, exc_info()))
+                if len(err.args) != 4:
+                    raise err
+                if err.args[0] & HTTP_LEVEL:
+                    handle_http_error(request, response)
+                    match = True
     #application error
     if not match: 
         response.update({
             "header": {
-                "status": 400
+                "STATUS": 400
                 },
             "stream": ""
             })
@@ -572,7 +577,6 @@ def handle_http_request(fd, events):
         if events & EPOLLIN: 
             command = ord(_read(fd, 1))
             #add forbidden ip 
-            pdb.set_trace()
             if command & COMMAND_IP_FORBIDDEN:
                 try:
                     many = unpack("I", _read(fd, 4))[0] 
@@ -676,7 +680,7 @@ def handle_http_request(fd, events):
                 400, None, "unable to find header"))
         if header.get("Connection") == "keep-alive": 
             close_reqest = False 
-        if header.get("method") == "GET": 
+        if header.get("METHOD") == "GET": 
             #build_request 
             request = {
                     "header": header,
@@ -695,8 +699,7 @@ def handle_http_request(fd, events):
                 _write(fd, outgoing_buf.getvalue())
             except OSError as e:
                 if e.errno == EAGAIN:
-                    raise e
-                print "write later"
+                    raise e 
                 #write later
                 buf_queue[fd][-2] += 1 
                 return
@@ -708,7 +711,7 @@ def handle_http_request(fd, events):
             else:
                 incoming_buf.truncate(0)
                 outgoing_buf.truncate(0) 
-        elif header.get("method") == "POST": 
+        elif header.get("METHOD") == "POST": 
             try:
                 content_length = int(header.get("Content-Length"))
             except:

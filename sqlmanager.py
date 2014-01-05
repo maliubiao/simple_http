@@ -21,14 +21,14 @@ def sigusr1_handler(signum, frame):
 def home_get(request, response): 
     response.update({ 
             "header": {
-                "status": 403,
+                "STATUS": 403,
                 "Content-Encoding": "gzip",
                 "Content-Type": "text/html", 
                 },
             "stream": ""
             })
 
-def home_post(request, response):
+def home_post(request, response): 
     request_stream = request["stream"] 
     if "host" in request_stream:
         try:
@@ -44,7 +44,7 @@ def home_post(request, response):
             result = json.dumps(err.args)
         response.update({
             "header": {
-                "status": 200,
+                "STATUS": 200,
                 "Content-Encoding": "gzip",
                 "Content-Type": "application/json"
                 },
@@ -53,7 +53,7 @@ def home_post(request, response):
         return 
     if "sql" in request_stream: 
         if not mycon.is_connected():
-            mycon.connect("localhost", 3306, "root", "########", "mysql")
+            mycon.connect("localhost", 3306, "root", "!20111992ma", "mysql")
         sql = request_stream["sql"] 
         try:
             query = mycon.query(sql)
@@ -67,7 +67,7 @@ def home_post(request, response):
             result = json.dumps(err.args)
         response.update({
             "header": {
-                "status": 200,
+                "STATUS": 200,
                 "Content-Encoding": "gzip",
                 "Content-Type": "application/json" 
                 },
@@ -78,15 +78,15 @@ def home_post(request, response):
 
 home_application = {
         "url": r"^/query$",
-        "get": home_get,
-        "post": home_post 
+        "GET": home_get,
+        "POST": home_post 
         }
 
 nonblocking.install(home_application)
 nonblocking.install_statics("ui", os.path.abspath("./statics"), nonblocking.STATICS_MMAP)
 
 try:
-    _proc.setrlimit(_proc.RLIMIT_NOFILE, (10240, 20480))
+    _proc.setrlimit(_proc.RLIMIT_NOFILE, (20480, 40960))
 except OSError, err:
     print "setrlimit failed, quit: %s" % str(err)
     exit(0)
@@ -96,7 +96,7 @@ nonblocking.log_level = nonblocking.LOG_ALL
 
 nonblocking.run_as_user("richard_n")
 nonblocking.server_config() 
-#nonblocking.daemonize() 
+nonblocking.daemonize() 
 
 nonblocking.poll_open(("localhost", 8800)) 
 print "worker at %d on cpu %d" % (8800, 0)

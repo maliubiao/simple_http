@@ -875,20 +875,20 @@ def complex_post_decode(string, boundary):
                 post_dict[k]["filename"] = fn[0].split("=")[1].strip('"')
     return post_dict 
 
-def header_encode(header, client_side=True):
+def header_encode(header, client_side=True): 
     buf = StringIO()
     if client_side:
-        buf.write(header["method"])
-        buf.write(header["path"])
+        buf.write(header["METHOD"])
+        buf.write(header["PATH"])
         buf.write(" "+HTTP_VERSION) 
         buf.write(NEWLINE)
-        del header["method"]
-        del header["path"]
+        del header["METHOD"]
+        del header["PATH"]
     else: 
         buf.write(HTTP_VERSION+" ")
-        buf.write(http_message[header["status"]])
+        buf.write(http_message[header["STATUS"]])
         buf.write(NEWLINE)
-        del header["status"] 
+        del header["STATUS"] 
     for k,v in header.items():
         buf.write('%s: %s%s' % (k, v, NEWLINE)) 
     final = buf.getvalue()
@@ -902,12 +902,12 @@ def header_decode(header_string, client_side=True):
     first_line = header_string.find(NEWLINE) 
     status = header_string[:first_line].split(" ") 
     if client_side: 
-        header_dict["protocol"] = status[0]
-        header_dict["status"] = int(status[1])
-        header_dict["message"] = " ".join(status[2:])
+        header_dict["PROTOCOL"] = status[0]
+        header_dict["STATUS"] = int(status[1])
+        header_dict["MESSAGE"] = " ".join(status[2:])
     else:
-        header_dict["method"] = status[0] 
-        header_dict["path"] = status[1] 
+        header_dict["METHOD"] = status[0] 
+        header_dict["PATH"] = status[1] 
     set_cookie_maybe = False
     if header_string[first_line+2:].find(NEWLINE) < 0:
         return header_dict, None
