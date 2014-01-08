@@ -29,6 +29,49 @@ In [14]: pprint.pprint(content[:1024])
 '<!DOCTYPE html>\n<html>\n  <head prefix="og: http://ogp.me/ns# fb: http://ogp.me/ns/fb# githubog: http://ogp.me/ns/fb/githubog#">\n    <meta charset=\'utf-8\'>\n    <meta http-equiv="X-UA-Compatible" content="IE=edge">\n        <title>GitHub \xc2\xb7 Build software better, together.</title>\n    <link rel="search" type="application/opensearchdescription+xml" href="/opensearch.xml" title="GitHub" />\n    <link rel="fluid-icon" href="https://github.com/fluidicon.png" title="GitHub" />\n    <link rel="apple-touch-icon" sizes="57x57" href="/apple-touch-icon-114.png" />\n    <link rel="apple-touch-icon" sizes="114x114" href="/apple-touch-icon-114.png" />\n    <link rel="apple-touch-icon" sizes="72x72" href="/apple-touch-icon-144.png" />\n    <link rel="apple-touch-icon" sizes="144x144" href="/apple-touch-icon-144.png" />\n    <link rel="logo" type="image/svg" href="https://github-media-downloads.s3.amazonaws.com/github-logo.svg" />\n    <meta property="og:image" content="https://github.global.ssl.fastly.net/images/modules/logos_page/O'
 ...
 ```
+###Proxy: HTTP and SOCKS5
+####socks5
+```shell 
+In [8]: simple_http.get("https://google.com", proxy='socks5://127.0.0.1:8888')
+Out[8]: 
+({'Alternate-Protocol': '443:quic',
+  'Cache-Control': 'public, max-age=2592000',
+  'Content-Length': '220',
+  'Content-Type': 'text/html; charset=UTF-8',
+  'Date': 'Wed, 08 Jan 2014 13:28:59 GMT',
+  'Expires': 'Fri, 07 Feb 2014 13:28:59 GMT',
+  'Location': 'https://www.google.com/',
+  'Server': 'gws',
+  'X-Frame-Options': 'SAMEORIGIN',
+  'X-XSS-Protection': '1; mode=block',
+  'message': 'Moved Permanently',
+  'protocol': 'HTTP/1.1',
+  'status': 301},
+ None,
+ '<HTML><HEAD><meta http-equiv="content-type" content="text/html;charset=utf-8">\n<TITLE>301 Moved</TITLE></HEAD><BODY>\n<H1>301 Moved</H1>\nThe document has moved\n<A HREF="https://www.google.com/">here</A>.\r\n</BODY></HTML>\r\n')
+```
+####http
+```shell 
+In [46]: simple_http.get("https://google.com", proxy='http://127.0.0.1:8088')
+Out[46]: 
+({'Alternate-Protocol': '443:quic',
+  'Cache-Control': 'public, max-age=2592000',
+  'Content-Encoding': 'deflate',
+  'Content-Length': '172',
+  'Content-Type': 'text/html; charset=UTF-8',
+  'Date': 'Wed, 08 Jan 2014 13:46:57 GMT',
+  'Expires': 'Fri, 07 Feb 2014 13:46:57 GMT',
+  'Location': 'https://www.google.com/',
+  'Server': 'gws',
+  'Via': 'HTTP/1.1 GWA',
+  'X-Frame-Options': 'SAMEORIGIN',
+  'X-Xss-Protection': '1; mode=block',
+  'message': '',
+  'protocol': 'HTTP/1.1',
+  'status': 301},
+ None,
+ '<HTML><HEAD><meta http-equiv="content-type" content="text/html;charset=utf-8">\n<TITLE>301 Moved</TITLE></HEAD><BODY>\n<H1>301 Moved</H1>\nThe document has moved\n<A HREF="https://www.google.com/">here</A>.\r\n</BODY></HTML>\r\n')
+```
 ```py
 
 #! /usr/bin/env python

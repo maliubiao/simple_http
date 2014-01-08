@@ -234,10 +234,15 @@ def init_string_hex_table():
 def init_hex_string_table():
     for char in range(0x00, 0xff+1):
         hex_string_table["%" + chr(char).encode("hex").upper()] = char
+
 init_hex_string_table()
 init_string_hex_table() 
 
-def get(url, query=None, header=None, cookie=None, proxy = None, callback=None, timeout=0, httpmethod="GET "): 
+
+def get(url, query=None, header=None, cookie = None, proxy = None, timeout=0, callback = None):
+    return general_get(url, query, header, cookie, proxy, timeout, callback, httpmethod="GET ")
+
+def general_get(url, query=None, header=None, cookie=None, proxy = None, timeout = 0, callback=None, httpmethod="GET "): 
     request_buffer = StringIO() 
     url_dict = url_decode(url) 
     #http basic authorization 
@@ -250,7 +255,6 @@ def get(url, query=None, header=None, cookie=None, proxy = None, callback=None, 
             del url_dict["password"]
         else:
             raise Exception("Basic Authentication need your password") 
-
     #http proxy, mangle header
     http_proxy = None
     if proxy:
@@ -259,6 +263,8 @@ def get(url, query=None, header=None, cookie=None, proxy = None, callback=None, 
             if proxy_dict.get("user"):
                 http_proxy = "Basic %s" % base64.b64encode(
                             "%s:%s" % (proxy_dict["user"], proxy_dict["password"])) 
+            else:
+                http_proxy = " "
     #maybe ssl connection
     use_ssl = False 
     if url_dict.get("scheme"):
@@ -287,8 +293,8 @@ def get(url, query=None, header=None, cookie=None, proxy = None, callback=None, 
     path = url_encode(url_dict) 
     if not header: header = default_header.copy() 
     if httpmethod:
-        header["method"] = httpmethod
-    header["path"] = path 
+        header["METHOD"] = httpmethod
+    header["PATH"] = path 
     header["Host"] = "%s:%d" % (host, port) 
     #mangle header for basic authorization
     if basicauth: header["Authorization"] = basicauth 
@@ -335,11 +341,13 @@ def wait_response(connection, normal_stream, timeout=0):
     header = None 
     cookie = None
     header_maybe = False 
+    header_buffer = StringIO()
     content_buffer = StringIO()
     ranges_maybe = False
     average = 0 
     average_count = 0
     read_count = 4096 
+    noheader = 0
     #if recv blocks, interrupt syscall after timeout
     if timeout:
         signal.alarm(timeout) 
@@ -371,12 +379,22 @@ def wait_response(connection, normal_stream, timeout=0):
                 read_count = 0.8*read_count
             average = 0
             average_count = 0 
-        #read header
+        #read header 
         if not header_maybe: 
-            header_end = data.find(HEADER_END)
-            if header_end < 0:
-                content_buffer.close()
-                raise socket.error("header too large or not a header")
+            if header_buffer:
+                header_buffer.write(data) 
+                data = header_buffer.getvalue()                
+            header_end = data.find(HEADER_END) 
+            if header_end < 0: 
+                noheader += 1 
+                if noheader > 2:
+                    content_buffer.close()
+                    raise socket.error("header too large or not a header")
+                else:
+                    header_buffer.write(data)
+                    continue
+            else:
+                header_buffer.close()
             header, cookie = header_decode(data[:header_end]) 
             if CONTENT_LENGTH in header:
                 total_length = int(header[CONTENT_LENGTH])
@@ -446,13 +464,13 @@ def send_http(connection, use_ssl, message, proxy=None, timeout=0):
                 if not sock.recv(12).startswith("\x05\x00"): 
                     sock.close()
                     raise Exception("proxy network error")
-            elif proxy_dict["scheme"] == "http": 
+            elif proxy_dict["scheme"] in "https": 
                 proxy_server = (proxy_dict["host"], proxy_dict["port"]) 
                 sock.connect(proxy_server) 
         else:
             sock.connect(connection)
         #if scheme == "https"
-        if use_ssl:
+        if use_ssl and not proxy:
             sock = ssl.wrap_socket(sock) 
         sock.send(message) 
         gzip_maybe, deflate_maybe, cookie, header = wait_response(sock, content_buffer, timeout=timeout)
@@ -560,8 +578,8 @@ def post(url, payload, header=None, cookie=None, proxy=None, callback=None, time
         content_buffer.write("&".join(["=".join((url_escape(k),
                             url_escape(v))) for k, v in payload.items()])) 
     header[CONTENT_LENGTH] = str(content_buffer.tell())
-    header["path"]  = path
-    header["method"] = METHOD_POST
+    header["PATH"]  = path
+    header["METHOD"] = METHOD_POST
     #mangle header for basic authorization
     if basicauth: header["Authorization"] = basicauth 
     #mangle header for basic proxy authorization
@@ -636,13 +654,13 @@ def url_encode(url_dict):
     if "port" in url_dict:
         url_buffer.write(":")
         url_buffer.write(str(port))
-    if "path" in url_dict: 
-        if not url_dict["path"].startswith("/"):
+    if "PATH" in url_dict: 
+        if not url_dict["PATH"].startswith("/"):
             url_buffer.write("/")
-        if not url_dict["path"].endswith("/"): 
-            url_buffer.write(url_dict["path"])
+        if not url_dict["PATH"].endswith("/"): 
+            url_buffer.write(url_dict["PATH"])
         else: 
-            url_buffer.write(url_dict["path"]) 
+            url_buffer.write(url_dict["PATH"]) 
     if "query" in url_dict: 
         url_buffer.write(url_dict["query"])
     if "params" in url_dict: 
@@ -690,7 +708,7 @@ def url_decode(url):
             url_dict["port"] = int(url[port_maybe+1:])
         else:
             url_dict["host"] = url[last:]
-        url_dict["path"] = "/"
+        url_dict["PATH"] = "/"
         return url_dict 
     ulen = len(url)
     i = last
@@ -703,10 +721,10 @@ def url_decode(url):
         char = url[i]
         if char == "?":
             if i == next_path_maybe:
-                url_dict["path"] = "/"
+                url_dict["PATH"] = "/"
                 continue
             if not path_found:
-                url_dict["path"] = url[last:i]
+                url_dict["PATH"] = url[last:i]
                 path_found = 1
             frag_maybe = url_find("#", i)
             params_maybe= url_find(";", i)
@@ -725,10 +743,10 @@ def url_decode(url):
                     break
         elif char == "#":             
             if i == next_path_maybe:
-                url_dict["path"] = "/"
+                url_dict["PATH"] = "/"
                 continue
             if not path_found:
-                url_dict["path"] = url[last:i]
+                url_dict["PATH"] = url[last:i]
                 path_found = 1
             query_maybe = url_find("?", i)
             params_maybe = url_find(";", i)
@@ -747,10 +765,10 @@ def url_decode(url):
                     break
         elif char == ";":
             if i == next_path_maybe:
-                url_dict["path"] = "/"
+                url_dict["PATH"] = "/"
                 continue
             if not path_found:
-                url_dict["path"] = url[lat:i]
+                url_dict["PATH"] = url[lat:i]
                 path_found = 1
             query_maybe = url_find("?", i)
             frag_maybe = url_find("#", i)
@@ -769,7 +787,7 @@ def url_decode(url):
                     break
         i += 1 
     if not any((params_found, query_found, frag_found)):
-        url_dict["path"] = url[last:]
+        url_dict["PATH"] = url[last:]
     return url_dict
     
 def server_cookie_get(server_cookie):
