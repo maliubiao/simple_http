@@ -74,6 +74,22 @@ Out[46]:
 ```
 ```py
 
+###http request simulator
+```shell 
+#python http_request_simulator.py "www.baidu.com"
+=========
+page done: www.baidu.com
+timeout: 5s
+=========
+url done: http://www.baidu.com/cache/global/img/gs.gif
+url done: http://www.baidu.com/img/bdlogo.gif
+url done: http://s1.bdstatic.com/r/www/cache/static/user/js/u_7b0ea87f.js
+url done: http://s1.bdstatic.com/r/www/cache/static/global/js/home_254ecbb1.js
+url done: http://s1.bdstatic.com/r/www/cache/static/global/js/tangram-1.3.4c1.0_07038476.js
+url done: http://s1.bdstatic.com/r/www/cache/static/jquery/jquery-1.10.2.min_f2fb5194.js
+request done
+```
+
 #! /usr/bin/env python
 import os
 import pdb
