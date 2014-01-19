@@ -611,9 +611,10 @@ def handle_http_request(fd, events):
         post_type = 0
         buf_queue[fd] = [incoming_buf, outgoing_buf, None, None, False, time()+KEEP_ALIVE, 0, 0, 0] 
     else: 
-        incoming_buf, outgoing_buf, header, cookie, close_request, alive, post_type, write_later, left = buf_queue[fd] 
+        context = buf_queue[fd] 
+        incoming_buf, outgoing_buf, header, cookie, close_request, alive, post_type, write_later, left = context
         #update keep-alive time 
-        buf_queue[fd][-4] = time() + KEEP_ALIVE 
+        context[-4] = time() + KEEP_ALIVE 
     #read all we got 
     if events & EPOLLIN: 
         #with write_later, we have to deny new request
@@ -647,7 +648,7 @@ def handle_http_request(fd, events):
                     raise e
                 #still unavaiable 
                 #add write_later
-                buf_queue[fd][-2] += 1
+                context[-2] += 1
                 return 
             #finally
             if close_reqest:
@@ -659,7 +660,7 @@ def handle_http_request(fd, events):
                 incoming_buf.truncate(0)
                 outgoing_buf.truncate(0) 
                 #write_later = 0
-                buf_queue[fd][-2] = 0
+                context[-2] = 0
         else:
             #EPOLLOUT without EPOLLIN, ignore
             if not events & EPOLLIN:
@@ -701,7 +702,7 @@ def handle_http_request(fd, events):
                 if e.errno == EAGAIN:
                     raise e 
                 #write later
-                buf_queue[fd][-2] += 1 
+                context[-2] += 1 
                 return
             if close_request:
                 incoming_buf.close()
@@ -727,7 +728,7 @@ def handle_http_request(fd, events):
                     400, None, "Body too big"))
             if left < content_length: 
                 #wait request body
-                request = buf_queue[fd]
+                request = context 
                 request[-1] = content_length - left 
                 request[2] = header
                 request[3] = cookie
@@ -788,7 +789,7 @@ def handle_http_request(fd, events):
                         raise e
                     #write later
                     print "write later"
-                    buf_queue[fd][-2] += 1
+                    context[-2] += 1
                     return
                 if close_request:
                     incoming_buf.close()
@@ -806,7 +807,7 @@ def handle_http_request(fd, events):
             raise Exception((HTTP_LEVEL,
                 400, None, "Body too big"))
         if left > 0:
-            buf_queue[fd][-1] = left
+            context[-1] = left
         else:
             request = {
                     "header": header,
@@ -834,7 +835,7 @@ def handle_http_request(fd, events):
             except OSError as e:
                 if e.errno == EAGAIN:
                     raise e
-                buf_queue[fd][-2] += 1
+                context[-2] += 1
                 return
             if close_request:
                 incoming_buf.close()

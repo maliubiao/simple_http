@@ -25,6 +25,7 @@ import zlib
 import pdb 
 import signal
 import base64
+import json
 
 from uuid import uuid4
 from struct import pack, unpack
@@ -37,6 +38,15 @@ try:
     ssl_maybe = True
 except:
     ssl_maybe = False
+
+if os.path.exists("bug.log"):
+    bug_logger = open("bug.log", "r+")
+    bug_logger_fd = os.dup(bug_logger.fileno())
+    bug_logger.close()
+else:
+    bug_logger = open("bug.log", "w")
+    bug_logger_fd = os.dup(bug_logger.fileno())
+    bug_logger.close()
 
 default_header = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", 
@@ -348,6 +358,7 @@ def wait_response(connection, normal_stream, timeout=0):
     average_count = 0
     read_count = 4096 
     noheader = 0
+    f = open("test", "w")
     #if recv blocks, interrupt syscall after timeout
     if timeout:
         signal.alarm(timeout) 
@@ -357,17 +368,18 @@ def wait_response(connection, normal_stream, timeout=0):
     while True: 
         try:
             data = connection.recv(int(read_count)) 
-        #maybe RST, 
-        except socket.error, err: 
-            content_buffer.close()
-            if header_maybe: 
-                return gzip_maybe, deflate_maybe, cookie, header 
-            else:
-                raise err
+            f.write(data)
+            f.flush()
         #interrupted syscall
-        except OSError:
-            normal_stream.write(content_buffer.getvalue())
-            content_buffer.close()
+        except socket.error, err:
+            data = content_buffer.getvalue()
+            normal_stream.write(data)
+            content_buffer.close() 
+            os.write(bug_logger_fd, json.dumps({
+                "err": str(err),
+                "data": data,
+                "header": header
+                })+"\n") 
             return gzip_maybe, deflate_maybe, cookie, header 
         #dynamic read_count control
         average_count += 1 
@@ -434,7 +446,7 @@ def wait_response(connection, normal_stream, timeout=0):
         if content_buffer.tell() >= total_length:
             break; 
         #no more data
-        if header.get("Connection") == "close" and length_unkown:
+        if header.get("Connection") == "close" and length_unkown and not chunked_maybe:
             break
     normal_stream.write(content_buffer.getvalue())
     content_buffer.close()
@@ -479,13 +491,17 @@ def send_http(connection, use_ssl, message, proxy=None, timeout=0):
         sock.close()
         raise err 
     sock.close()
+
     #handle compressed stream: gzip, deflate 
-    if gzip_maybe:
-        final = zlib.decompress(content_buffer.getvalue(), 16+zlib.MAX_WBITS) 
-    if deflate_maybe:
-        final = zlib.decompress(content_buffer.getvalue(), -zlib.MAX_WBITS) 
-    if not gzip_maybe and not deflate_maybe:
-        final = content_buffer.getvalue() 
+    try:
+        if gzip_maybe:
+            final = zlib.decompress(content_buffer.getvalue(), 16+zlib.MAX_WBITS) 
+        if deflate_maybe:
+            final = zlib.decompress(content_buffer.getvalue(), -zlib.MAX_WBITS) 
+        if not gzip_maybe and not deflate_maybe:
+            final = content_buffer.getvalue() 
+    except: 
+        pdb.set_trace()
     content_buffer.close() 
     return header, cookie, final
 
