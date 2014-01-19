@@ -71,9 +71,7 @@ Out[46]:
   'status': 301},
  None,
  '<HTML><HEAD><meta http-equiv="content-type" content="text/html;charset=utf-8">\n<TITLE>301 Moved</TITLE></HEAD><BODY>\n<H1>301 Moved</H1>\nThe document has moved\n<A HREF="https://www.google.com/">here</A>.\r\n</BODY></HTML>\r\n')
-```
-```py
-
+``` 
 ###http request simulator
 ```shell 
 #python http_request_simulator.py "www.baidu.com"
@@ -89,7 +87,7 @@ url done: http://s1.bdstatic.com/r/www/cache/static/global/js/tangram-1.3.4c1.0_
 url done: http://s1.bdstatic.com/r/www/cache/static/jquery/jquery-1.10.2.min_f2fb5194.js
 request done
 ```
-
+```py
 #! /usr/bin/env python
 import os
 import pdb
