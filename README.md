@@ -74,19 +74,39 @@ Out[46]:
 ``` 
 ###http request simulator
 ```shell 
-#python http_request_simulator.py "www.baidu.com"
+$python http_request_simulator.py "weibo.com"
 =========
-page done: www.baidu.com
-timeout: 5s
+page done: weibo.com
+timeout: 3s
 =========
-url done: http://www.baidu.com/cache/global/img/gs.gif
-url done: http://www.baidu.com/img/bdlogo.gif
-url done: http://s1.bdstatic.com/r/www/cache/static/user/js/u_7b0ea87f.js
-url done: http://s1.bdstatic.com/r/www/cache/static/global/js/home_254ecbb1.js
-url done: http://s1.bdstatic.com/r/www/cache/static/global/js/tangram-1.3.4c1.0_07038476.js
-url done: http://s1.bdstatic.com/r/www/cache/static/jquery/jquery-1.10.2.min_f2fb5194.js
-request done
+url done: http://tp4.sinaimg.cn/1693146987/50/0/0
+url done: http://tp4.sinaimg.cn/2669568935/50/0/0
+url done: http://tp1.sinaimg.cn/1724196104/50/0/0
+url done: http://tp4.sinaimg.cn/1774814087/50/0/0
+url done: http://tp4.sinaimg.cn/1736031115/50/0/0
+url done: http://tp3.sinaimg.cn/1707759510/50/0/0
+url done: http://tp4.sinaimg.cn/2642032423/50/0/0
+url done: http://tp4.sinaimg.cn/1730725935/50/0/0
+url done: http://tp4.sinaimg.cn/1242716987/50/0/0
+url done: http://tp4.sinaimg.cn/1488834727/50/0/0
+url done: http://tp3.sinaimg.cn/1871599514/50/0/0
+url done: http://tp4.sinaimg.cn/1727873155/50/0/0
+url done: http://tp1.sinaimg.cn/1886832164/50/0/0
+url done: http://tp1.sinaimg.cn/1589797232/50/0/0
+url done: http://tp1.sinaimg.cn/2441302392/50/0/0
+url done: http://img.t.sinajs.cn/t35/style/images/tlogin/botlogo.png
+url done: http://rs.sinajs.cn/mini.gif?t=w1&uids=1707759510,1759023505,1867565545,1724196104,2669568935,2441302392,1871599514,2642032423,1192428237
+url done: http://js.t.sinajs.cn/t35/miniblog/js/yunying_unlogin3.js?version=20131127172405
+url done: http://js.t.sinajs.cn/t35/miniblog/js/lang_zh.js?version=20131127172405
+url done: http://tp2.sinaimg.cn/1867565545/50/0/0
+url done: http://js.t.sinajs.cn/t35/miniblog/static/js/sso.js?v=20131127172405
+url done: http://tp2.sinaimg.cn/1192428237/50/0/0
+url done: http://i1.sinaimg.cn/unipro/pub/suda_m_v629.js
+url done: http://beacon.sina.com.cn/e.gif?noScript
+url done: http://tp2.sinaimg.cn/1759023505/50/0/0
+request done, kill 0 children
 ```
+####nonblocking
 ```py
 #! /usr/bin/env python
 import os

@@ -36,16 +36,24 @@ def getpage(url, nsecs=2):
         else:
             pids.append(pid) 
     #wait children for nsecs 
-    time.sleep(nsecs) 
-    for i in urls: 
-        pid, _, _ = os.wait3(os.WNOHANG)
-        if pid:
-            del pids[pids.index(pid)]
-    #kill them if they are still in progress
-    for i in pids: 
-        os.kill(i, signal.SIGKILL)        
-    print "request done"
+    def clean_children(signum, frame): 
+        for i in urls: 
+            pid, _, _ = os.wait3(os.WNOHANG)
+            if pid:
+                del pids[pids.index(pid)]
+        #kill them if they are still in progress
+        for i in pids: 
+            os.kill(i, signal.SIGKILL)        
+        for i in pids:
+            os.wait()
+        print "request done, kill %d children" % len(pids)
+    signal.setitimer(signal.ITIMER_REAL, nsecs)
+    signal.signal(signal.SIGINT, clean_children)
+    signal.signal(signal.SIGALRM, clean_children)
+    #block
+    time.sleep(0xffff)
 
 if __name__ == "__main__":
-    import sys
-    getpage(sys.argv[1], nsecs=5)
+    import sys 
+    getpage(sys.argv[1], nsecs=3)
+
