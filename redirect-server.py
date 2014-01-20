@@ -119,6 +119,11 @@ status_dict = {
     0: "status-clear"
 }
 
+f = open("logger.log", "w")
+
+def write_log(msg):
+    f.write(msg)
+    f.flush()
 
 def handle_data(event, fd):
     #epoll event after clean_queue
@@ -167,10 +172,10 @@ def handle_data(event, fd):
 
     if event & EPOLLIN: 
         try:
-            text = from_conn.recv(32) 
+            text = from_conn.recv(64) 
         except socket.error:
-            return
-        #may RST
+            return 
+        #may RST 
         if not text:
             clean_queue(fd)
             return 
@@ -178,7 +183,6 @@ def handle_data(event, fd):
             status = STATUS_DATA 
         else:            
             status = STATUS_REQUEST 
-
     if status & STATUS_REQUEST: 
         if not (event & (~EPOLLOUT)):
             return 
@@ -213,25 +217,25 @@ def handle_data(event, fd):
                 request_sock = _socket(_AF_INET, _SOCK_STREAM)
                 request_sock.setblocking(0)  
                 request_fd = request_sock.fileno()
-                ep.register(request_fd, EPOLLIN|EPOLLOUT|EPOLLET)
-                #request context 
-                remote = (addr, port[0])
-                cons[request_fd] = {
-                        "in_buffer": StringIO(),
-                        "out_buffer": StringIO(),
-                        "from_conn": request_sock,
-                        "to_conn": from_conn,
-                        "crypted": True, 
-                        "request": remote,
-                        "status": STATUS_WAIT_REMOTE,
-                        "active": time()
-                        } 
-                context["to_conn"] = request_sock
-                context["status"] = STATUS_WAIT_REMOTE
-                context["request"] = remote
+                ep.register(request_fd, EPOLLIN|EPOLLOUT|EPOLLET) 
             except Exception as e: 
                 clean_queue(fd)
-                return
+                return 
+            #request context 
+            remote = (addr, port[0]) 
+            cons[request_fd] = {
+                    "in_buffer": StringIO(),
+                    "out_buffer": StringIO(),
+                    "from_conn": request_sock,
+                    "to_conn": from_conn,
+                    "crypted": True, 
+                    "request": remote,
+                    "status": STATUS_WAIT_REMOTE,
+                    "active": time()
+                    } 
+            context["to_conn"] = request_sock
+            context["status"] = STATUS_WAIT_REMOTE
+            context["request"] = remote
             try: 
                 request_sock.connect(remote)
             except socket.error as e: 

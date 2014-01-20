@@ -357,8 +357,7 @@ def wait_response(connection, normal_stream, timeout=0):
     average = 0 
     average_count = 0
     read_count = 4096 
-    noheader = 0
-    f = open("test", "w")
+    noheader = 0 
     #if recv blocks, interrupt syscall after timeout
     if timeout:
         signal.alarm(timeout) 
@@ -368,8 +367,6 @@ def wait_response(connection, normal_stream, timeout=0):
     while True: 
         try:
             data = connection.recv(int(read_count)) 
-            f.write(data)
-            f.flush()
         #interrupted syscall
         except socket.error, err:
             data = content_buffer.getvalue()
@@ -457,9 +454,11 @@ def send_http(connection, use_ssl, message, proxy=None, timeout=0):
         content_buffer = StringIO() 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
         #if there is a proxy , connect proxy server instead
+        proxy_type = None 
         if proxy:
             proxy_dict = url_decode(proxy)
             if proxy_dict["scheme"] == "socks5":
+                proxy_type = "socks5"
                 proxy_server = (proxy_dict["host"], proxy_dict["port"]) 
                 sock.connect(proxy_server) 
                 #socks5 handshake
@@ -477,12 +476,15 @@ def send_http(connection, use_ssl, message, proxy=None, timeout=0):
                     sock.close()
                     raise Exception("proxy network error")
             elif proxy_dict["scheme"] in "https": 
+                proxy_type = "http"
                 proxy_server = (proxy_dict["host"], proxy_dict["port"]) 
                 sock.connect(proxy_server) 
+            else:
+                raise Exception("unknown proxy type")
         else:
             sock.connect(connection)
         #if scheme == "https"
-        if use_ssl and not proxy:
+        if use_ssl and proxy_type != "http":
             sock = ssl.wrap_socket(sock) 
         sock.send(message) 
         gzip_maybe, deflate_maybe, cookie, header = wait_response(sock, content_buffer, timeout=timeout)
