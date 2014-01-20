@@ -171,8 +171,9 @@ def handle_data(event, fd):
                 return 
 
     if event & EPOLLIN: 
+        #at most, 256byte host name
         try:
-            text = from_conn.recv(64) 
+            text = from_conn.recv(256) 
         except socket.error:
             return 
         #may RST 
