@@ -1,4 +1,5 @@
 import os
+
 import signal
 import pdb
 import time
@@ -11,7 +12,7 @@ import simple_http
 def getpage(url, nsecs=2):
     try:
         _, _, content = simple_http.get(url,
-                proxy="socks5://127.0.0.1:9999")
+                proxy="socks5://127.0.0.1:9988")
     except Exception as e:
         raise Exception("request failed: %s error %s", (url, e)) 
     print "=========\npage done: %s\ntimeout: %ds\n=========" % (url, nsecs)
@@ -37,7 +38,7 @@ def getpage(url, nsecs=2):
         pid = os.fork()
         if not pid: 
             try:
-                simple_http.get(i, proxy="socks5://127.0.0.1:9999")
+                simple_http.get(i, proxy="socks5://127.0.0.1:9988")
                 print "url done: %s" % i
             except Exception as e:
                 print "url failed: %s" % i 

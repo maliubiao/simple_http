@@ -14,11 +14,11 @@ from Crypto.Cipher import AES
 from time import sleep 
 from time import time
 
-#server ip, port
-SERVER_IP = "127.0.0.1"
-SERVER_PORT = 9999 
 
-MAX_LISTEN = 10
+SERVER_IP = "127.0.0.1"
+SERVER_PORT = 9905
+
+MAX_LISTEN = 128
 
 _AF_INET = socket.AF_INET
 _SOCK_STREAM = socket.SOCK_STREAM
@@ -104,8 +104,6 @@ def clean_queue(fd):
     del cons[fd] 
 
 
-
-
 STATUS_HANDSHAKE = 0x1 << 1 
 STATUS_REQUEST = 0x1 << 2
 STATUS_WAIT_REMOTE = 0x1 << 3
@@ -119,13 +117,7 @@ status_dict = {
     0: "status-clear"
 }
 
-f = open("logger.log", "w")
-
-def write_log(msg):
-    f.write(msg)
-    f.flush()
-
-def handle_data(event, fd):
+def handle_data(event, fd): 
     #epoll event after clean_queue
     if fd not in cons:
         clean_queue(fd)
@@ -133,17 +125,9 @@ def handle_data(event, fd):
     #lazy unpack context
     context = cons[fd] 
     crypted, status, from_conn, to_conn, in_buffer, active, out_buffer, request = context.values() 
-    
-    if status & STATUS_HANDSHAKE:
-        if out_buffer.tell() and event & EPOLLOUT:
-            try:
-                from_conn.sendall(out_buffer.getvalue()) 
-            except socket.error:
-                if not (event & EPOLLIN):
-                    return
-            out_buffer.truncate(0)
-            context["status"] = STATUS_REQUEST
-            return 
+    if to_conn:
+        to_context = cons[to_conn.fileno()]
+    if status & STATUS_HANDSHAKE: 
         if event & EPOLLIN: 
             try:
                 raw = from_conn.recv(128)
@@ -162,7 +146,8 @@ def handle_data(event, fd):
                 try: 
                     from_conn.sendall("\x05\x00") 
                 except socket.error: 
-                    out_buffer.write(towrite) 
+                    print "send handshake failed" 
+                    clean_queue(fd)
                     return  
                 context["status"] = STATUS_REQUEST
                 return
@@ -237,12 +222,13 @@ def handle_data(event, fd):
             context["to_conn"] = request_sock
             context["status"] = STATUS_WAIT_REMOTE
             context["request"] = remote
+            print remote
             try: 
                 request_sock.connect(remote)
             except socket.error as e: 
                 #close connection if it's a real exception
                 if e.errno != errno.EINPROGRESS:
-                    clean_queue[fd] 
+                    clean_queue(fd) 
             return
         else: 
             status = STATUS_DATA 
@@ -258,46 +244,62 @@ def handle_data(event, fd):
                     return
             out_buffer.truncate(0)
             context["status"] = STATUS_DATA
+            to_context["status"] = STATUS_DATA
             return 
         msg = "\x05\x00\x00\x01%s%s" % (_inet_aton("0.0.0.0"),
                 pack(">H", 8888)) 
         try: 
             to_conn.sendall(msg)
         except socket.error:
-            out_buffer.write(msg)
+            to_context["out_buffer"].write(msg)
             return 
         context["status"] = STATUS_DATA
-        cons[to_conn.fileno()]["status"] = STATUS_DATA 
+        to_context["status"] = STATUS_DATA 
+        ep.modify(from_conn.fileno(), EPOLLIN|EPOLLOUT)
+        ep.modify(to_conn.fileno(), EPOLLIN|EPOLLOUT)
 
-    if status & STATUS_DATA:
-        if out_buffer.tell() and event & EPOLLOUT:
-            try:
-                from_conn.sendall(out_buffer.getvalue())
-            except socket.error:
-                return               
-            out_buffer.truncate(0)
+    if status & STATUS_DATA: 
+        if (event & EPOLLOUT) and len(out_buffer.getvalue()): 
+            try: 
+                data = out_buffer.getvalue()
+                data_count = len(data) 
+                data_sent = from_conn.send(data) 
+                if data_sent != data_count: 
+                    out_buffer.truncate(0)
+                    out_buffer.write(data[data_sent:])
+                    return
+            except socket.error as e: 
+                if e.errno == errno.EAGAIN: 
+                    return               
+                else:
+                    clean_queue(fd)
+                    return
+            out_buffer.truncate(0) 
             return
         if event & EPOLLIN: 
+            to_out_buffer = to_context["out_buffer"] 
+            #write data to buffer
+            #we don't read more until we can send them out
+            if len(to_out_buffer.getvalue()):
+                to_out_buffer.write(text) 
+                return
             in_buffer.write(text) 
-            while True:
-                try:
-                    data = from_conn.recv(4096) 
-                except socket.error as e: 
-                    if e.errno == errno.EAGAIN:
-                        break
-                    else:
-                        clean_queue(fd)
-                        return
-                if data:
-                    in_buffer.write(data)
+            try: 
+                data = from_conn.recv(4096) 
+                in_buffer.write(data)
+                data_count = in_buffer.tell() 
+                data_sent = to_conn.send(in_buffer.getvalue()) 
+                if data_sent != data_count:
+                    in_buffer.seek(data_sent)
+                    to_out_buffer.write(in_buffer.read()) 
+            except socket.error as e: 
+                if e.errno == errno.EAGAIN: 
+                    to_out_buffer.write(in_buffer.getvalue()) 
                 else:
-                    break 
-            try:
-                to_conn.sendall(in_buffer.getvalue()) 
-            except Exception:
-                clean_queue(fd)
-                return 
-            in_buffer.truncate(0) 
+                    clean_queue(fd) 
+                    return
+            in_buffer.truncate(0)
+            return 
 
 def handle_connection():
     conn, addr = _accept() 
@@ -318,7 +320,7 @@ def handle_connection():
 
 def poll_wait():
     while True:
-        for fd, event in ep.poll(): 
+        for fd, event in ep.poll(1): 
             if fd == sockfd:
                 if event & EPOLLIN:
                     handle_connection()
@@ -326,6 +328,7 @@ def poll_wait():
                     raise Exception("main socket error")
             else:
                 handle_data(event, fd)
+            sleep(0.001)
 
 if __name__ == "__main__":
     server_config()

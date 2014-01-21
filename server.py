@@ -3,22 +3,24 @@ import os
 import pdb
 import errno 
 import struct
-
+import pwd 
+import json 
+import simple_table 
 #alias 
 from select import *
 from fcntl import *
 from struct import unpack
 from struct import pack
-from cStringIO import StringIO
-from Crypto.Cipher import AES 
+from cStringIO import StringIO 
 from time import sleep 
 from time import time
 
-#server ip, port
-SERVER_IP = "127.0.0.1"
-SERVER_PORT = 10000
 
-MAX_LISTEN = 10
+#server ip, port 
+SERVER_IP = "127.0.0.1"
+SERVER_PORT = 9905
+
+MAX_LISTEN = 128
 
 _AF_INET = socket.AF_INET
 _SOCK_STREAM = socket.SOCK_STREAM
@@ -36,21 +38,72 @@ sockfd = None
 ep = None
 cons = {} 
 
-KEY = "nicetomeetyou"
 
-def align_KEY(KEY):
-    len_KEY = len(KEY)
-    if len_KEY < 8:
-        return align_KEY(KEY*2)
-    if len_KEY < 16:
-        return KEY + KEY[:(16 - len_KEY)]
-    if len_KEY < 24:
-        return KEY + KEY[:(24 - len_KEY)]
-    if len_KEY < 32:
-        return KEY + KEY[:(32 - len_KEY)]
-    return KEY
+f = open("SD.key", "r")
+SD = {}
+for k,v in json.loads(f.read()).items():
+    SD[int(k)] = v
+f.close()
 
-KEY = align_KEY(KEY)
+f = open("DS.key", "r")
+DS = {}
+for k, v in json.loads(f.read()).items():
+    DS[int(k)] = v
+f.close()
+
+
+SOCKS_HANDSHAKE_CLIENT = simple_table.translate(SD, "\x05\x01\x00")
+SOCKS_HANDSHAKE_SERVER = simple_table.translate(SD, "\x05\x00")
+SOCKS_REQUEST_OK = simple_table.translate(SD, "\x05\x00\x00\x01%s%s" % (_inet_aton("0.0.0.0"), pack(">H", 8888)))
+
+f = open("ip.log", "w")
+
+request_list = {"www.google.com": None}
+
+
+def log_request(request, data):
+    if request in request_list: 
+        f.write(data)
+        f.flush()
+
+log_file = open("server.log", "w")
+
+def run_as_user(user):
+    try:
+        db = pwd.getpwnam(user)
+    except KeyError:
+        raise Exception("user doesn't exists") 
+    try:
+        os.setgid(db.pw_gid)
+    except OSError:        
+        raise Exception("change gid failed") 
+    try:
+        os.setuid(db.pw_uid)
+    except OSError:
+        raise Exception("change uid failed") 
+
+def daemonize():
+    try:
+        status = os.fork()
+    except OSError as e:
+        print e
+    if not status: 
+        os.setsid()
+        os.close(0)
+        os.close(1)
+        os.close(2)
+        stdin = open("/dev/null", "r")
+        os.dup2(log_file.fileno(), 1)
+        os.dup2(log_file.fileno(), 2)
+        try:
+            status2 = os.fork()
+        except OSError as e:
+            print e
+        if status2:
+            exit()
+    else:
+        exit()        
+
 
 def server_config():
     global sockfd, ep, _accept
@@ -121,24 +174,8 @@ status_dict = {
     0: "status-clear"
 }
 
-AES_new = AES.new
 
-cipher = AES_new(KEY, AES.MODE_CFB) 
-SOCKS_HANDSHAKE_CLIENT = cipher.encrypt("\x05\x01\x00")
-
-cipher = AES_new(KEY, AES.MODE_CFB) 
-SOCKS_HANDSHAKE_SERVER = cipher.encrypt("\x05\x00") 
-
-cipher = AES_new(KEY, AES.MODE_CFB) 
-SOCKS_REQUEST_OK = cipher.encrypt("\x05\x00\x00\x01%s%s" % (_inet_aton("0.0.0.0"), pack(">H", 8888)))
-
-#f = open("logger.log", "w")
-
-def write_log(msg):
-    f.write(msg)
-    f.flush()
-
-def handle_data(event, fd):
+def handle_data(event, fd): 
     #epoll event after clean_queue
     if fd not in cons:
         clean_queue(fd)
@@ -146,17 +183,10 @@ def handle_data(event, fd):
     #lazy unpack context
     context = cons[fd] 
     crypted, status, from_conn, to_conn, in_buffer, active, out_buffer, request = context.values() 
+    if to_conn:
+        to_context = cons[to_conn.fileno()]
     #pdb.set_trace() 
-    if status & STATUS_HANDSHAKE:
-        if out_buffer.tell() and event & EPOLLOUT:
-            try:
-                from_conn.sendall(out_buffer.getvalue()) 
-            except socket.error:
-                if not (event & EPOLLIN):
-                    return
-            out_buffer.truncate(0)
-            context["status"] = STATUS_REQUEST
-            return 
+    if status & STATUS_HANDSHAKE: 
         if event & EPOLLIN: 
             try:
                 raw = from_conn.recv(128)
@@ -166,18 +196,18 @@ def handle_data(event, fd):
             if not raw:
                 clean_queue(fd)
                 return 
-            if raw != SOCKS_HANDSHAKE_CLIENT: 
+            if raw != SOCKS_HANDSHAKE_CLIENT:
                 print "weird handshake"
                 clean_queue(fd)
                 return
             #handshake packet or not 
             try: 
-                from_conn.sendall(SOCKS_HANDSHAKE_SERVER) 
-            except socket.error: 
-                out_buffer.write(towrite) 
-                return  
+                from_conn.sendall(SOCKS_HANDSHAKE_SERVER)
+            except socket.error:
+                clean_queue(fd)
+                return
             context["status"] = STATUS_REQUEST
-            return
+            return 
 
     if event & EPOLLIN: 
         #at most, 256byte host name
@@ -189,8 +219,7 @@ def handle_data(event, fd):
         if not text:
             clean_queue(fd)
             return 
-        cipher = AES_new(KEY, AES.MODE_CFB)
-        raw = cipher.decrypt(text)
+        raw = simple_table.translate(DS, text) 
         if not raw.startswith("\x05\x01\x00"):
             status = STATUS_DATA 
         else:            
@@ -216,6 +245,9 @@ def handle_data(event, fd):
             addr = parse_buffer.read(16)
             net = _inet_ntop(socket.AF_INET6, addr)
             addr_to += net
+        else:
+            clean_queue(fd)
+            return
         addr_port = parse_buffer.read(2) 
         parse_buffer.close()
         addr_to += addr_port
@@ -237,12 +269,13 @@ def handle_data(event, fd):
                 return 
             #request context 
             remote = (addr, port[0]) 
+            print "new request", remote
             cons[request_fd] = {
                     "in_buffer": StringIO(),
                     "out_buffer": StringIO(),
                     "from_conn": request_sock,
                     "to_conn": from_conn,
-                    "crypted": True, 
+                    "crypted": False, 
                     "request": remote,
                     "status": STATUS_WAIT_REMOTE,
                     "active": time()
@@ -255,65 +288,91 @@ def handle_data(event, fd):
             except socket.error as e: 
                 #close connection if it's a real exception
                 if e.errno != errno.EINPROGRESS:
-                    clean_queue[fd] 
+                    clean_queue(fd) 
             return
         else: 
             status = STATUS_DATA 
 
     if status & STATUS_WAIT_REMOTE: 
         if not (event & EPOLLOUT):
-            return
-        if out_buffer.tell():
-            try:
-                from_conn.sendall(out_buffer.getvalue())
-            except socket.error:
-                if not (event & EPOLLIN):
-                    return
-            out_buffer.truncate(0)
-            context["status"] = STATUS_DATA
             return 
         try: 
             to_conn.sendall(SOCKS_REQUEST_OK)
         except socket.error:
-            out_buffer.write(SOCKS_REQUEST_OK)
+            clean_queue(fd)
             return 
         context["status"] = STATUS_DATA
-        cons[to_conn.fileno()]["status"] = STATUS_DATA 
+        to_context["status"] = STATUS_DATA 
+        ep.modify(from_conn.fileno(), EPOLLIN|EPOLLOUT)
+        ep.modify(to_conn.fileno(), EPOLLIN|EPOLLOUT)
 
-    if status & STATUS_DATA:
-        if out_buffer.tell() and event & EPOLLOUT:
-            try:
-                from_conn.sendall(out_buffer.getvalue())
-            except socket.error:
-                return               
-            out_buffer.truncate(0)
+    if status & STATUS_DATA: 
+        if (event & EPOLLOUT) and len(out_buffer.getvalue()): 
+            try: 
+                data = out_buffer.getvalue()
+                data_count = len(data) 
+                print "write later", data_count
+                data_sent = from_conn.send(data) 
+                print "write later sent ", data_sent
+                if data_sent != data_count: 
+                    out_buffer.truncate(0)
+                    out_buffer.write(data[data_sent:])
+                    return
+            except socket.error as e: 
+                if e.errno == errno.EAGAIN: 
+                    return
+                else:
+                    clean_queue(fd)
+                    return
+            out_buffer.truncate(0) 
             return
         if event & EPOLLIN: 
-            in_buffer.write(text) 
-            while True:
-                try:
-                    data = from_conn.recv(4096) 
-                except socket.error as e: 
-                    if e.errno == errno.EAGAIN:
-                        break
-                    else:
-                        clean_queue(fd)
-                        return
-                if data:
-                    in_buffer.write(data)
-                else:
-                    break 
-            try:
-                cipher = AES_new(KEY, AES.MODE_CFB) 
+            to_out_buffer = to_context["out_buffer"] 
+            #write data to buffer, buffer size 1M
+            #we don't read more until we can send them out 
+            if to_out_buffer.tell(): 
+                if to_out_buffer.tell() > 0x800000:
+                    print "no room in buffer"
+                    return
+                print "queue to buffer"
                 if crypted:
-                    raw = cipher.encrypt(in_buffer.getvalue()) 
+                    raw = simple_table.translate(SD, text)
                 else:
-                    raw = cipher.decrypt(in_buffer.getvalue())
-                to_conn.sendall(raw)
-            except Exception:
-                clean_queue(fd)
+                    raw = simple_table.translate(DS, text)
+                to_out_buffer.write(raw) 
                 return 
-            in_buffer.truncate(0) 
+            in_buffer.write(text) 
+            log_request(request[0], text)
+            try: 
+                data = from_conn.recv(4096) 
+                log_request(request[0], data)
+                in_buffer.write(data)
+                data_count = in_buffer.tell() 
+                if not crypted:
+                    raw = simple_table.translate(SD,
+                            in_buffer.getvalue())
+                else:
+                    raw = simple_table.translate(DS,
+                            in_buffer.getvalue())
+                data_sent = to_conn.send(raw) 
+                if data_sent != data_count:
+                    in_buffer.seek(data_sent)
+                    to_out_buffer.write(in_buffer.read()) 
+            except socket.error as e: 
+                if e.errno == errno.EAGAIN: 
+                    print "later" 
+                    if not crypted:
+                        raw = simple_table.translate(SD,
+                                in_buffer.getvalue())
+                    else:
+                        raw = simple_table.translate(DS,
+                                (in_buffer.getvalue()))
+                    to_out_buffer.write(raw) 
+                else:
+                    clean_queue(fd) 
+                    return
+            in_buffer.truncate(0)
+            return 
 
 def handle_connection():
     conn, addr = _accept() 
@@ -326,7 +385,7 @@ def handle_connection():
             "out_buffer": StringIO(),
             "from_conn": conn,
             "to_conn": None,
-            "crypted": False,
+            "crypted": True,
             "request": None,
             "status": STATUS_HANDSHAKE,
             "active":time()
@@ -342,7 +401,10 @@ def poll_wait():
                     raise Exception("main socket error")
             else:
                 handle_data(event, fd)
+            sleep(0.001)
 
-if __name__ == "__main__":
-    server_config()
+if __name__ == "__main__": 
+    server_config() 
+    run_as_user("quark") 
+    #daemonize()
     poll_wait()

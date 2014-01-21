@@ -1,4 +1,8 @@
 from cStringIO import StringIO
+import socket
+from pprint import pprint
+import pdb
+import sys
 import simple_http
 import zlib
 
@@ -12,6 +16,9 @@ def _handle_chunked(data, normal_stream):
         try:
             this_chunk = int(data[prev_chunk:next_chunk], 16)
         except: 
+            print "prev_chunk", prev_chunk
+            print "next_chunk", next_chunk
+            pprint(data[prev_chunk-2:].encode("hex"))
             raise socket.error("chunked error")
         next_chunk += 2
         if not this_chunk: return
@@ -48,3 +55,9 @@ def parse(stream):
         final = zlib.decompress(content_buffer.getvalue(), -zlib.MAX_WBITS)
     stream_buffer.close() 
     return header, cookie, final 
+
+if __name__ == "__main__": 
+    f = open(sys.argv[1], "r")
+    data = f.read()
+    f.close()
+    print parse(data)

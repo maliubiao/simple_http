@@ -342,6 +342,7 @@ def handle_chunked(data, normal_stream):
         normal_stream.write(data[next_chunk: next_chunk+this_chunk])
         prev_chunk = next_chunk + this_chunk + 2
 
+f = open("test", "w")
 def wait_response(connection, normal_stream, timeout=0):
     total_length = 0xffffffff 
     chunked_maybe = False 
@@ -367,6 +368,8 @@ def wait_response(connection, normal_stream, timeout=0):
     while True: 
         try:
             data = connection.recv(int(read_count)) 
+            f.write(data)
+            f.flush() 
         #interrupted syscall
         except socket.error, err:
             data = content_buffer.getvalue()
