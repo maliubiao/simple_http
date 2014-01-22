@@ -21,8 +21,7 @@ SERVER_IP = "127.0.0.1"
 SERVER_PORT = 9988
 
 MAX_LISTEN = 128
-#REMOTE = ("127.0.0.1", 9905)
-
+REMOTE = ("127.0.0.1", 9905) 
 
 _AF_INET = socket.AF_INET
 _SOCK_STREAM = socket.SOCK_STREAM
@@ -414,18 +413,29 @@ def handle_connection():
             "active":time()
             } 
 
-def poll_wait():
-    while True:
-        for fd, event in ep.poll(): 
+def poll_wait(): 
+    #if not has_in_event, make loop 10000 times slower
+    has_in_event = True
+    ep_poll = ep.poll
+    while True: 
+        if has_in_event:
+            sleep_time = 0.000001
+            has_in_event = False
+        else:
+            sleep_time = 0.1 
+        sleep(sleep_time) 
+        for fd, event in ep_poll(): 
+            if event & EPOLLIN:
+                has_in_event = True
             if fd == sockfd:
                 if event & EPOLLIN:
                     handle_connection()
                 else:
                     raise Exception("main socket error")
             else:
-                handle_data(event, fd)
-            sleep(0.001)
+                handle_data(event, fd) 
 
 if __name__ == "__main__":
-    server_config()
+    server_config() 
+    daemonize()
     poll_wait()

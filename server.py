@@ -363,19 +363,27 @@ def handle_connection():
             } 
 
 def poll_wait():
+    #if not has_in_event, make loop 10000 times slower
+    has_in_event = True
+    ep_poll = ep.poll 
     while True:
-        for fd, event in ep.poll(): 
+        if has_in_event:
+            sleep_time = 0.000001
+            has_in_event = False
+        else:
+            sleep_time = 0.1 
+        sleep(sleep_time) 
+        for fd, event in ep_poll(): 
             if fd == sockfd:
                 if event & EPOLLIN:
                     handle_connection()
                 else:
                     raise Exception("main socket error")
             else:
-                handle_data(event, fd)
-            sleep(0.001)
+                handle_data(event, fd) 
 
 if __name__ == "__main__": 
     server_config() 
-    #run_as_user("any") 
-    #daemonize()
+    run_as_user("quark") 
+    daemonize()
     poll_wait()
