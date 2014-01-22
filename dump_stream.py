@@ -5,8 +5,8 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 sock.connect(("127.0.0.1", 9988))
 sock.sendall("\x05\x01\x00")
 
-url = "www.google.com"
-socks_url = "\x05\x01\x00\x03%s%s%s" % (pack(">B", len(url)), url, pack(">H", 443)) 
+url = "www.ifeng.com"
+socks_url = "\x05\x01\x00\x03%s%s%s" % (pack(">B", len(url)), url, pack(">H", 80)) 
 
 print sock.recv(12).encode("hex")
 sock.sendall(socks_url)

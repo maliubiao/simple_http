@@ -32,6 +32,8 @@ _socket = socket.socket
 _fromfd = socket.fromfd
 _inet_ntop = socket.inet_ntop
 _inet_aton = socket.inet_aton 
+
+simple_table_translate = simple_table.translate
 _accept = None
 
 sockfd = None
@@ -51,20 +53,10 @@ for k, v in json.loads(f.read()).items():
     DS[int(k)] = v
 f.close()
 
+SOCKS_HANDSHAKE_CLIENT = simple_table_translate(SD, "\x05\x01\x00")
+SOCKS_HANDSHAKE_SERVER = simple_table_translate(SD, "\x05\x00")
+SOCKS_REQUEST_OK = simple_table_translate(SD, "\x05\x00\x00\x01%s%s" % (_inet_aton("0.0.0.0"), pack(">H", 8888)))
 
-SOCKS_HANDSHAKE_CLIENT = simple_table.translate(SD, "\x05\x01\x00")
-SOCKS_HANDSHAKE_SERVER = simple_table.translate(SD, "\x05\x00")
-SOCKS_REQUEST_OK = simple_table.translate(SD, "\x05\x00\x00\x01%s%s" % (_inet_aton("0.0.0.0"), pack(">H", 8888)))
-
-f = open("ip.log", "w")
-
-request_list = {"www.google.com": None}
-
-
-def log_request(request, data):
-    if request in request_list: 
-        f.write(data)
-        f.flush()
 
 log_file = open("server.log", "w")
 
@@ -158,24 +150,13 @@ def clean_queue(fd):
     #delete context
     del cons[fd] 
 
-
-
-
 STATUS_HANDSHAKE = 0x1 << 1 
 STATUS_REQUEST = 0x1 << 2
 STATUS_WAIT_REMOTE = 0x1 << 3
 STATUS_DATA = 0x1 << 4
 
-status_dict = {
-    STATUS_HANDSHAKE: "status-handshake",
-    STATUS_REQUEST: "status-request",
-    STATUS_WAIT_REMOTE: "status-remote",
-    STATUS_DATA: "status-data",
-    0: "status-clear"
-}
 
-
-def handle_data(event, fd): 
+def handle_data(event, fd):
     #epoll event after clean_queue
     if fd not in cons:
         clean_queue(fd)
@@ -184,14 +165,28 @@ def handle_data(event, fd):
     context = cons[fd] 
     crypted, status, from_conn, to_conn, in_buffer, active, out_buffer, request = context.values() 
     if to_conn:
-        to_context = cons[to_conn.fileno()]
+        to_context = cons[to_conn.fileno()] 
     #pdb.set_trace() 
+    if (event & EPOLLOUT) and out_buffer.tell():
+        try: 
+            data = out_buffer.getvalue()
+            data_count = len(data) 
+            data_sent = from_conn.send(data) 
+            if data_sent != data_count: 
+                out_buffer.truncate(0)
+                out_buffer.write(data[data_sent:])
+                return
+        except socket.error as e: 
+            if e.errno == errno.EAGAIN: 
+                return
+            else: 
+                clean_queue(fd)
+                return
+        out_buffer.truncate(0) 
+
     if status & STATUS_HANDSHAKE: 
         if event & EPOLLIN: 
-            try:
-                raw = from_conn.recv(128)
-            except OSError:
-                return
+            raw = from_conn.recv(128) 
             #maybe RST
             if not raw:
                 clean_queue(fd)
@@ -204,22 +199,23 @@ def handle_data(event, fd):
             try: 
                 from_conn.sendall(SOCKS_HANDSHAKE_SERVER)
             except socket.error:
-                clean_queue(fd)
+                out_buffer.write(SOCKS_HANDSHAKE_SERVER) 
                 return
-            context["status"] = STATUS_REQUEST
+            context["status"] = STATUS_REQUEST 
             return 
 
     if event & EPOLLIN: 
-        #at most, 256byte host name
+        #at most, 256byte host name 
         try:
             text = from_conn.recv(256) 
         except socket.error:
-            return 
-        #may RST 
-        if not text:
             clean_queue(fd)
             return 
-        raw = simple_table.translate(DS, text) 
+        #may RST 
+        if not text: 
+            clean_queue(fd)
+            return 
+        raw = simple_table_translate(DS, text) 
         if not raw.startswith("\x05\x01\x00"):
             status = STATUS_DATA 
         else:            
@@ -245,7 +241,7 @@ def handle_data(event, fd):
             addr = parse_buffer.read(16)
             net = _inet_ntop(socket.AF_INET6, addr)
             addr_to += net
-        else:
+        else: 
             clean_queue(fd)
             return
         addr_port = parse_buffer.read(2) 
@@ -263,7 +259,7 @@ def handle_data(event, fd):
                 request_sock = _socket(_AF_INET, _SOCK_STREAM)
                 request_sock.setblocking(0)  
                 request_fd = request_sock.fileno()
-                ep.register(request_fd, EPOLLIN|EPOLLOUT|EPOLLET) 
+                ep.register(request_fd, EPOLLIN|EPOLLOUT) 
             except Exception as e: 
                 clean_queue(fd)
                 return 
@@ -281,13 +277,13 @@ def handle_data(event, fd):
                     "active": time()
                     } 
             context["to_conn"] = request_sock
-            context["status"] = STATUS_WAIT_REMOTE
+            context["status"] = 0
             context["request"] = remote
             try: 
                 request_sock.connect(remote)
             except socket.error as e: 
-                #close connection if it's a real exception
-                if e.errno != errno.EINPROGRESS:
+                #close connection if it's a real exception 
+                if e.errno != errno.EINPROGRESS: 
                     clean_queue(fd) 
             return
         else: 
@@ -298,61 +294,36 @@ def handle_data(event, fd):
             return 
         try: 
             to_conn.sendall(SOCKS_REQUEST_OK)
-        except socket.error:
-            clean_queue(fd)
+        except socket.error as e: 
+            to_context["out_buffer"].write(SOCKS_REQUEST_OK) 
             return 
         context["status"] = STATUS_DATA
         to_context["status"] = STATUS_DATA 
-        ep.modify(from_conn.fileno(), EPOLLIN|EPOLLOUT)
-        ep.modify(to_conn.fileno(), EPOLLIN|EPOLLOUT)
 
     if status & STATUS_DATA: 
-        if (event & EPOLLOUT) and len(out_buffer.getvalue()): 
-            try: 
-                data = out_buffer.getvalue()
-                data_count = len(data) 
-                print "write later", data_count
-                data_sent = from_conn.send(data) 
-                print "write later sent ", data_sent
-                if data_sent != data_count: 
-                    out_buffer.truncate(0)
-                    out_buffer.write(data[data_sent:])
-                    return
-            except socket.error as e: 
-                if e.errno == errno.EAGAIN: 
-                    return
-                else:
-                    clean_queue(fd)
-                    return
-            out_buffer.truncate(0) 
-            return
         if event & EPOLLIN: 
             to_out_buffer = to_context["out_buffer"] 
             #write data to buffer, buffer size 1M
             #we don't read more until we can send them out 
             if to_out_buffer.tell(): 
-                if to_out_buffer.tell() > 0x800000:
-                    print "no room in buffer"
-                    return
-                print "queue to buffer"
+                if to_out_buffer.tell() > 0x800000: 
+                    return 
                 if crypted:
-                    raw = simple_table.translate(SD, text)
+                    raw = simple_table_translate(SD, text)
                 else:
-                    raw = simple_table.translate(DS, text)
+                    raw = simple_table_translate(DS, text)
                 to_out_buffer.write(raw) 
                 return 
             in_buffer.write(text) 
-            log_request(request[0], text)
             try: 
                 data = from_conn.recv(4096) 
-                log_request(request[0], data)
                 in_buffer.write(data)
                 data_count = in_buffer.tell() 
                 if not crypted:
-                    raw = simple_table.translate(SD,
+                    raw = simple_table_translate(SD,
                             in_buffer.getvalue())
                 else:
-                    raw = simple_table.translate(DS,
+                    raw = simple_table_translate(DS,
                             in_buffer.getvalue())
                 data_sent = to_conn.send(raw) 
                 if data_sent != data_count:
@@ -360,25 +331,25 @@ def handle_data(event, fd):
                     to_out_buffer.write(in_buffer.read()) 
             except socket.error as e: 
                 if e.errno == errno.EAGAIN: 
-                    print "later" 
                     if not crypted:
-                        raw = simple_table.translate(SD,
+                        raw = simple_table_translate(SD,
                                 in_buffer.getvalue())
                     else:
-                        raw = simple_table.translate(DS,
+                        raw = simple_table_translate(DS,
                                 (in_buffer.getvalue()))
                     to_out_buffer.write(raw) 
-                else:
+                else: 
                     clean_queue(fd) 
                     return
             in_buffer.truncate(0)
             return 
 
+
 def handle_connection():
     conn, addr = _accept() 
     fd = conn.fileno() 
     conn.setblocking(0)
-    ep.register(fd, EPOLLIN|EPOLLOUT|EPOLLET)
+    ep.register(fd, EPOLLIN|EPOLLOUT)
     #add fd to queue
     cons[fd] = {
             "in_buffer": StringIO(),
@@ -405,6 +376,6 @@ def poll_wait():
 
 if __name__ == "__main__": 
     server_config() 
-    run_as_user("quark") 
+    #run_as_user("any") 
     #daemonize()
     poll_wait()
