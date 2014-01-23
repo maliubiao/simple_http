@@ -11,10 +11,12 @@ import pwd
 import mmap
 import traceback
 import ujson
+import _proc
 import simple_http
 import simple_gzip
 
 from time import time 
+from time import sleep
 from simple_http import auto_content_type
 from simple_http import simple_post_decode
 from socket import inet_ntoa
@@ -164,8 +166,8 @@ def set_refer_allowed(refers):
             raise Exception("space is not allowed in refer")
     refer_allowed = refers
 
-def sigint_handler(signum, frame):
-    poll_close()
+def sigint_handler(signum, frame): 
+    poll_close() 
     _proc.force_exit(0)
 
 def sigtimer_handler(signum, frame):
@@ -262,6 +264,7 @@ def poll_open(connection):
 
 def poll_close(): 
     global epm, sock 
+    log_file.write("pid: %d sigint, exit\n" % os.getpid())
     if log_buffer: 
         log_file.write(log_buffer.getvalue())
         log_buffer.close() 
@@ -297,13 +300,15 @@ def handle_new_connection(connection):
 
 def poll_wait(): 
     global sucess, failed 
-    while True:
-        try:
-            event_pairs = _poll(1) 
-        except Exception as e: 
-            print e
-            continue 
-        for fd, events in event_pairs:
+    has_in_event = True 
+    while True: 
+        if has_in_event:
+            sleep_time = 0.000001
+            has_in_event = False
+        else:
+            sleep_time = 0.01
+        sleep(sleep_time) 
+        for fd, events in _poll(1):
             if fd == sock_fd: 
                 if events & (EPOLLERR | EPOLLHUP):
                     raise Exception("main socket error") 
