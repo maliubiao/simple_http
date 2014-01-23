@@ -166,7 +166,7 @@ def set_refer_allowed(refers):
 
 def sigint_handler(signum, frame):
     poll_close()
-    exit(0)
+    _proc.force_exit(0)
 
 def sigtimer_handler(signum, frame):
     #clean keep-alive every KEEP_ALIVE seconds
@@ -266,14 +266,17 @@ def poll_close():
         log_file.write(log_buffer.getvalue())
         log_buffer.close() 
     log_file.close() 
-    epm.close()
     sock.close() 
     try:
         epm.unregister(data_fd) 
         _close(f) 
     except:
         pass 
-    os.remove(data_fifo)
+    epm.close()
+    try:
+        os.remove(data_fifo)
+    except:
+        pass
 
 def handle_new_connection(connection):
     con, addr = connection
