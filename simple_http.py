@@ -1,3 +1,8 @@
+"""
+simple http library
+"""
+
+
 import os.path 
 import socket
 import io 
@@ -6,6 +11,7 @@ import pdb
 import signal
 import base64
 import json
+from string import letters
 
 from uuid import uuid4
 from struct import pack, unpack
@@ -15,9 +21,9 @@ from collections import OrderedDict
 
 try:
     import ssl
-    ssl_maybe = True
+    has_ssl = True
 except:
-    ssl_maybe = False
+    has_ssl = False
 
 
 
@@ -27,7 +33,8 @@ default_header = { "Accept": "text/html,application/xhtml+xml,application/xml;q=
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:25.0) Gecko/20100101 Firefox/25.0"
         } 
 
-common_mimetypes = {
+#common mimetypes
+commts = {
         "pdf": "application/pdf",
         "zip": "application/zip",
         "gz": "application/x-gzip",
@@ -67,7 +74,7 @@ common_mimetypes = {
 
 
 #http consts
-http_message = {
+responses = {
         100: "100 Continue",
         101: "101 Switching Protocols",
         102: "102 Processing",
@@ -150,144 +157,156 @@ FORM_FILE = 'Content-Disposition: form-data; name="%s"; filename="%s"\r\nContent
 FORM_STRING = 'Content-Disposition: form-data; name="%s"\r\n\r\n%s\r\n' 
 
 FORM_SIMPLE_TYPE = "application/x-www-form-urlencoded"
-FORM_COMPLEX_TYPE = "multipart/form-data; boundary=%s" % BOUNDARY
+FORM_COMPLEX_TYPE = "multipart/form-data; boundary=%s" % BOUNDARY 
 
-
-#ascii -> %hex
-hex_string_table = {} 
-#%hex -> ascii
-string_hex_table = {}        
 #url reversed characters 
 reversed_table = { 
         #0x21: "%21", #!
-        #0x23: "%23", ##
-        0x24: "%24", #$
-        0x26: "%26", #&
+        "\x23": "%23", ##
+        "\x24": "%24", #$
+        "\x26": "%26", #&
         #0x27: "%27", #'
         #0x28: "%28", #(
         #0x29: "%29", #)
-        0x2A: "%2A", #*
-        0x2B: "%2B", #+
-        0x2C: "%2C", #,
-        0x2F: "%2F", #/
-        0x3A: "%3A", #:
-        0x3B: "%3B", #;
-        0x3D: "%3D", #=
-        0x3F: "%3F", #?
-        0x40: "%40", #@
+        "\x2A": "%2A", #*
+        "\x2B": "%2B", #+
+        "\x2C": "%2C", #,
+        "\x2F": "%2F", #/
+        "\x3A": "%3A", #:
+        "\x3B": "%3B", #;
+        "\x3D": "%3D", #=
+        "\x3F": "%3F", #?
+        "\x40": "%40", #@
         #0x5B: "%5B", #[
         #0x5D: "%5D" #]
         }
 
 #url common characters
 common_chars_table = {
-        0x20: "%20", #space
-        0x22: "%22", #"
-        0x25: "%25", #%
-        0x2D: "%2D", #-
+        "\x20": "%20", #space
+        "\x22": "%22", #"
+        "\x25": "%25", #%
+        "\x2D": "%2D", #-
         #0x2E: "%2E", #.
-        0x3C: "%3C", #<
-        0x3E: "%3E", #>
-        0x5C: "%5C", #\
-        0x5E: "%5E", #^
+        "\x3C": "%3C", #<
+        "\x3E": "%3E", #>
+        "\x5C": "%5C", #\
+        "\x5E": "%5E", #^
         #0x5F: "%5F", #_                
-        0x60: "%60", #`
-        0x7B: "%7B", #{
-        0x7C: "%7C", #|
-        0x7D: "%7D", #}
-        0x7E: "%7E" #~
+        "\x60": "%60", #`
+        "\x7B": "%7B", #{
+        "\x7C": "%7C", #|
+        "\x7D": "%7D", #}
+        "\x7E": "%7E" #~
         }
 
-def init_string_hex_table():
-    for char in range(0x00, 0xff+1):
-        string_hex_table[char] = "%" + chr(char).encode("hex").upper()
-def init_hex_string_table():
-    for char in range(0x00, 0xff+1):
-        hex_string_table["%" + chr(char).encode("hex").upper()] = char
 
-init_hex_string_table()
-init_string_hex_table() 
+#ascii -> %hex
+_hextochr = {} 
+#%hex -> ascii
+_chrtohex = {}        
 
-
-def get(url, query=None, header=None, cookie = None, proxy = None, timeout=0, callback = None):
-    return general_get(url, query, header, cookie, proxy, timeout, callback, httpmethod="GET ")
+_hextochr = dict(("%%%X" % char, chr(char))
+        for char in range(0x0, 0xff+1))
+_chrtohex = dict((chr(char), "%%%X" % char)
+        for char in range(0x0, 0xff+1)) 
 
 
-def general_get(url, query=None, header=None, cookie=None, proxy = None, timeout = 0, callback=None, httpmethod="GET "): 
-    request_buffer = StringIO() 
-    url_dict = url_decode(url) 
-    #http basic authorization 
-    basicauth = None 
-    if "user" in url_dict:
-        if "password" in url_dict: 
-            basicauth = "Basic %s" % base64.b64encode(
-                        "%s:%s" % (url_dict["user"], url_dict["password"])) 
-            del url_dict["password"]
-        else:
-            basicauth = "Basic %s" % base64.b64encode(url_dict["user"])
-        del url_dict["user"]
+def basic_auth_from_url(url_dict): 
+    if "password" in url_dict: 
+        basicauth = "Basic %s" % base64.b64encode("%s:%s" % (url_dict["user"], url_dict["password"])) 
+        del url_dict["password"]
+    else:
+        basicauth = "Basic %s" % base64.b64encode(url_dict["user"])
+    del url_dict["user"]
+    return basicauth
 
-    #http proxy, mangle header
-    http_proxy = None
-    if proxy:
-        proxy_dict = url_decode(proxy) 
-        if proxy_dict["scheme"] == "http":
-            if proxy_dict.get("user"):
-                http_proxy = "Basic %s" % base64.b64encode(
-                            "%s:%s" % (proxy_dict["user"], proxy_dict["password"])) 
-            else:
-                http_proxy = " "
-    #maybe ssl connection
-    use_ssl = False 
+def proxy_from_url(proxy): 
+    proxy_dict = urlparse(proxy) 
+    if proxy_dict["scheme"] == "http":
+        if proxy_dict.get("user"):
+            http_proxy = "Basic %s" % base64.b64encode("%s:%s" % (proxy_dict["user"], proxy_dict["password"])) 
+    else:
+        http_proxy = "" 
+    return http_proxy
+
+def join_query_dict(query):
+    return "?%s" % ("&".join(["=".join((quote_plus(k), quote_plus(v))) for k,v in query.items()]))
+
+
+def scheme_from_dict(url_dict): 
+    use_ssl = False
     if "scheme" in url_dict:
         if url_dict["scheme"] == "https":
-            use_ssl = True
-        if not http_proxy:
-            del url_dict["scheme"] 
+            use_ssl = True 
     if use_ssl:
-        if not ssl_maybe:
-            request_buffer.close()
+        if not has_ssl: 
             raise Exception("Unsupported scheme")
         port = 443 
     else:
         port = 80 
-    if url_dict.get("port"):
-        port = url_dict["port"]
-        if not http_proxy:
-            del url_dict["port"] 
+    return use_ssl, port
+
+
+def get(url, **kwargs):
+    return general_get(url, httpmethod="GET ", **kwargs)
+
+
+def general_get(url, **kwargs): 
+    request_list = [] 
+    url_dict = urlparse(url) 
+    #http basic authorization 
+    basicauth = None 
+    if "user" in url_dict:
+        basicauth = basic_auth_from_url(url_dict) 
+    #http proxy, mangle header
+    http_proxy = None
+    if kwargs.get("proxy"):
+        http_proxy = proxy_from_url(kwargs["proxy"])
+    else:
+        kwargs["proxy"] = ""
+    #maybe ssl connection
+    use_ssl, port = scheme_from_dict(url_dict) 
     #handle query string
-    if query:
-        url_dict["query"] = "?%s" % ("&".join(["=".join((url_escape(k), url_escape(v))) for k,v in query.items()]))
+    if kwargs.get("query"):
+        url_dict["query"] = join_query_dict(kwargs["query"]) 
     host = url_dict["host"] 
+    #remove scheme://host:port 
     if not http_proxy:
         del url_dict["host"] 
-
-    path = url_encode(url_dict) 
-    if not header: header = default_header.copy() 
-    if httpmethod:
-        header["METHOD"] = httpmethod
-    header["PATH"] = path 
+        del url_dict["scheme"] 
+    if "port" in url_dict:
+        del url_dict["port"] 
+    if not kwargs.get("header"):
+        header = default_header.copy() 
+    else:
+        header = kwargs["header"]
     header["Host"] = "%s:%d" % (host, port) 
-    #mangle header for basic authorization 
+    #reuqest path
+    path = urlunparse(url_dict) 
+    if kwargs.get("httpmethod"):
+        header["METHOD"] = kwargs["httpmethod"] 
+    header["PATH"] = path 
+    #for basic authorization 
     if basicauth: header["Authorization"] = basicauth 
-    #mangle header for basic proxy authorization
+    #for basic proxy authorization
     if http_proxy: header["Proxy-Authorization"] = http_proxy 
-    request_buffer.write(header_encode(header)) 
+    request_list.append(unparse_header(header)) 
     #generate cookie and HEADER_END
-    if cookie:
-        request_buffer.write("Cookie: ")    
-        request_buffer.write(client_cookie_encode(cookie)) 
-        request_buffer.write(HEADER_END) 
+    if kwargs.get("cookie"):
+        request_list.append("Cookie: ")    
+        request_list.append(unparse_simple_cookie(kwargs["cookie"])) 
+        request_list.append(HEADER_END) 
     else:
-        request_buffer.write(NEWLINE)
-    final = request_buffer.getvalue()    
-    request_buffer.close() 
+        request_list.append(NEWLINE) 
+    if not kwargs.get("timeout"):
+        kwargs["timeout"] = 0 
+    #args for send_http
+    final = "".join(request_list)       
     connection = (host, port) 
-    if not callback:
-        return sync_get(connection, use_ssl, final, proxy = proxy, timeout=timeout)
-    else:
-        return async_get(connection, use_ssl, final, callback=callback, timeout=timeout) 
-        
+    args = (connection, kwargs["proxy"], final, kwargs["timeout"])
+    return send_http(*args)
+
 def handle_chunked(data, normal_stream):
     prev_chunk = 0
     next_chunk = 0
@@ -304,19 +323,16 @@ def handle_chunked(data, normal_stream):
         normal_stream.write(data[next_chunk: next_chunk+this_chunk])
         prev_chunk = next_chunk + this_chunk + 2
 
-
 def wait_response(connection, normal_stream, timeout=0):
     total_length = 0xffffffff 
-    chunked_maybe = False 
-    length_unkown = False
-    gzip_maybe = False
-    deflate_maybe = False
+    chunked = False 
+    length_unkown = False 
     header = None 
     cookie = None
-    header_maybe = False 
+    has_header = False 
     header_buffer = StringIO()
     content_buffer = StringIO()
-    ranges_maybe = False
+    has_range = False
     average = 0 
     average_count = 0
     read_count = 4096 
@@ -326,7 +342,7 @@ def wait_response(connection, normal_stream, timeout=0):
         signal.alarm(timeout) 
         def wait_timeout(signum, frame):
             return
-        signal.signal(signal.SIGALRM, wait_timeout)
+        signal.signal(signal.SIGALRM, wait_timeout) 
     while True: 
         try:
             data = connection.recv(int(read_count)) 
@@ -335,20 +351,19 @@ def wait_response(connection, normal_stream, timeout=0):
             data = content_buffer.getvalue()
             normal_stream.write(data)
             content_buffer.close() 
-
-            return gzip_maybe, deflate_maybe, cookie, header 
+            return header, cookie
         #dynamic read_count control
         average_count += 1 
         average += len(data) 
         if average_count == 2: 
             if average / average_count > (0.8*read_count):
-                read_count = 1.25*read_count
+                read_count = 1.25 * read_count
             else:
-                read_count = 0.8*read_count
+                read_count = 0.8 * read_count
             average = 0
             average_count = 0 
         #read header 
-        if not header_maybe: 
+        if not has_header: 
             if header_buffer:
                 header_buffer.write(data) 
                 data = header_buffer.getvalue()                
@@ -363,38 +378,34 @@ def wait_response(connection, normal_stream, timeout=0):
                     continue
             else:
                 header_buffer.close() 
-            header, cookie = header_decode(data[:header_end]) 
+            header, cookie = parse_header(data[:header_end]) 
             if CONTENT_LENGTH in header:
                 total_length = int(header[CONTENT_LENGTH])
             else:
                 length_unkown = True 
             #maybe chunked stream
             if header.get(TRANSFER_ENCODING) == "chunked": 
-                chunked_maybe = True
-            #maybe gzip stream
-            if header.get(CONTENT_ENCODING) == "gzip": 
-                gzip_maybe = True 
-            if header.get(CONTENT_ENCODING) == "deflate":
-                deflate_maybe = True
+                chunked = True
+
             if header.get("Accept-Ranges") == "bytes":
-                ranges_maybe = True
+                has_range = True
                 length_unkown = True
             if header.get("Content-Range"):
                 length_unkown = False 
             data = data[header_end+4:] 
-            if not gzip_maybe and not chunked_maybe and not ranges_maybe and length_unkown and not deflate_maybe and not data:
+            if not chunked and not has_range and length_unkown and not data:
                 break
-            header_maybe = True 
+            has_header = True 
         content_buffer.write(data) 
         #handle chunked data
-        if chunked_maybe:
+        if chunked:
             chunked_end = data.rfind("0\r\n\r\n")
             if chunked_end > -1: 
                 handle_chunked(content_buffer.getvalue(), normal_stream)
                 content_buffer.close()
-                return gzip_maybe, deflate_maybe, cookie, header 
+                return header, cookie
         #if we don't know the end, assume HEADER_END
-        if length_unkown and not chunked_maybe:
+        if length_unkown and not chunked:
             entity_end = data.rfind(HEADER_END)
             if entity_end == (len(data) -4): 
                 break 
@@ -402,11 +413,41 @@ def wait_response(connection, normal_stream, timeout=0):
         if content_buffer.tell() >= total_length:
             break; 
         #no more data
-        if header.get("Connection") == "close" and length_unkown and not chunked_maybe:
+        if header.get("Connection") == "close" and length_unkown and not chunked:
             break
     normal_stream.write(content_buffer.getvalue())
     content_buffer.close()
-    return gzip_maybe, deflate_maybe, cookie, header
+    return header, cookie
+
+def connect_proxy(sock, connection, proxy): 
+    proxy_type = None
+    proxy_dict = url_decode(proxy)
+    if proxy_dict["scheme"] == "socks5":
+        proxy_type = "socks5"
+        proxy_server = (proxy_dict["host"], proxy_dict["port"]) 
+        sock.connect(proxy_server) 
+        #socks5 handshake
+        sock.send("\x05\x01\x00") 
+        if not sock.recv(4).startswith("\x05\x00"): 
+            sock.close()
+            raise Exception("connect proxy failed") 
+        #use remote dns by default
+        sock.send("\x05\x01\x00\x03%s%s%s" % (pack("B",
+            len(connection[0])),
+            connection[0],
+            pack(">H", connection[1])))
+        #if request failed
+        if not sock.recv(12).startswith("\x05\x00"): 
+            sock.close()
+            raise Exception("proxy network error")
+    elif proxy_dict["scheme"] in "https": 
+        proxy_type = "http"
+        proxy_server = (proxy_dict["host"], proxy_dict["port"]) 
+        sock.connect(proxy_server) 
+    else:
+        raise Exception("unknown proxy type")
+    return proxy_type
+
 
 def send_http(connection, use_ssl, message, proxy=None, timeout=0): 
     try: 
@@ -415,398 +456,342 @@ def send_http(connection, use_ssl, message, proxy=None, timeout=0):
         #if there is a proxy , connect proxy server instead
         proxy_type = None 
         if proxy:
-            proxy_dict = url_decode(proxy)
-            if proxy_dict["scheme"] == "socks5":
-                proxy_type = "socks5"
-                proxy_server = (proxy_dict["host"], proxy_dict["port"]) 
-                sock.connect(proxy_server) 
-                #socks5 handshake
-                sock.send("\x05\x01\x00") 
-                if not sock.recv(4).startswith("\x05\x00"): 
-                    sock.close()
-                    raise Exception("connect proxy failed") 
-                #use remote dns by default
-                sock.send("\x05\x01\x00\x03%s%s%s" % (pack("B",
-                    len(connection[0])),
-                    connection[0],
-                    pack(">H", connection[1])))
-                #if request failed
-                if not sock.recv(12).startswith("\x05\x00"): 
-                    sock.close()
-                    raise Exception("proxy network error")
-            elif proxy_dict["scheme"] in "https": 
-                proxy_type = "http"
-                proxy_server = (proxy_dict["host"], proxy_dict["port"]) 
-                sock.connect(proxy_server) 
-            else:
-                raise Exception("unknown proxy type")
+            proxy_type = connect_proxy(sock, connection, proxy)
         else:
             sock.connect(connection)
-        #if scheme == "https"
         if use_ssl and proxy_type != "http":
             sock = ssl.wrap_socket(sock) 
         sock.send(message) 
-        gzip_maybe, deflate_maybe, cookie, header = wait_response(sock, content_buffer, timeout=timeout)
+        header, cookie = wait_response(sock,
+                content_buffer,
+                timeout=timeout)
     except socket.error, err: 
         content_buffer.close()
         sock.close()
         raise err 
-    sock.close()
-
+    sock.close() 
     #handle compressed stream: gzip, deflate 
-    try:
-        if gzip_maybe:
-            final = zlib.decompress(content_buffer.getvalue(), 16+zlib.MAX_WBITS) 
-        if deflate_maybe:
-            final = zlib.decompress(content_buffer.getvalue(), -zlib.MAX_WBITS) 
-        if not gzip_maybe and not deflate_maybe:
+    try: 
+        #maybe gzip stream
+        if header.get(CONTENT_ENCODING) == "gzip": 
+            final = zlib.decompress(content_buffer.getvalue(),
+                    16+zlib.MAX_WBITS)  
+        elif header.get(CONTENT_ENCODING) == "deflate":
+            final = zlib.decompress(content_buffer.getvalue(),
+                    -zlib.MAX_WBITS)  
+        else:
             final = content_buffer.getvalue() 
     except: 
         pdb.set_trace()
     content_buffer.close() 
     return header, cookie, final
 
-def sync_get(connection, use_ssl, message, proxy=None, timeout=0): 
-    return send_http(connection, use_ssl, message, proxy=proxy, timeout=timeout) 
 
-def sync_post(connection, use_ssl, message, proxy=None, timeout=0):
-    return send_http(connection, use_ssl, message, proxy=proxy, timeout=timeout)
-
-def post(url, payload, header=None, cookie=None, proxy=None, callback=None, timeout=0): 
-    content_buffer = StringIO()
-    request_buffer = StringIO() 
-    use_ssl = False 
-    url_dict = url_decode(url) 
-    #http basic authorization
-    basicauth = None
-    if "user" in url_dict:
-        if "password" in url_dict:
-            basicauth = "Basic %s" % base64.b64encode("%s:%s" % (url_dict["user"],
-                            url_dict["password"]))
-            del url_dict["password"]
-        else:
-            basicauth = "Basic %s" % base64.b64encode(url_dict["user"])
-        del url_dict["user"] 
-
-    #http proxy, mangle header
-    http_proxy = None
-    if proxy:
-        proxy_dict = url_decode(proxy) 
-        if proxy_dict["scheme"] == "http":
-            if proxy_dict.get("user"):
-                http_proxy = "Basic %s" % base64.b64encode("%s:%s" % (proxy_dict["user"],
-                            proxy_dict["password"])) 
-    #generate PATH 
-    if "scheme" in url_dict:
-        if url_dict["scheme"] == "https":
-            use_ssl = True
-        if not http_proxy:
-            del url_dict["scheme"] 
-    host = url_dict["host"] 
-    del url_dict["host"] 
-    #maybe ssl connection
-    if use_ssl:
-        if not ssl_maybe:
-            content_buffer.close()
-            request_buffer.close()
-            raise Exception("Unsupported scheme")
-        port = 443 
-    else:
-        port = 80 
-    if "port" in url_dict:
-        port = url_dict["port"]
-        if not http_proxy:
-            del url_dict["port"] 
-    path = url_encode(url_dict) 
+def unparse_post(payload): 
+    has_file = False 
+    content_list = []
     #use multipart/form-data or not
-    file_maybe = False 
     for k,v in payload.items(): 
-        if not (isinstance(v, str) or 
-                isinstance(v, file)): 
-            content_buffer.close()
-            request_buffer.close()
+        if not (isinstance(v, str) or isinstance(v, file)): 
             raise Exception("payload value: str or unicode or fileobject")
         if isinstance(v, file):
-            file_maybe = True 
+            has_file = True 
 
-    if not header: header = default_header.copy() 
-    header["Host"] = "%s:%d" % (host, port) 
-    if not file_maybe:
-        header[CONTENT_TYPE] = FORM_SIMPLE_TYPE
-    else:
-        header[CONTENT_TYPE] = FORM_COMPLEX_TYPE 
     #generate multipart stream
-    if file_maybe: 
+    if has_file: 
         for k, v in payload.items():
             if isinstance(v, str):
-                content_buffer.write(BOUNDARY_STRING)
-                content_buffer.write(FORM_STRING % (k, v)) 
+                content_list.append(BOUNDARY_STRING)
+                content_list.append(FORM_STRING % (k, v)) 
             if isinstance(v, file):
                 filename = os.path.basename(v.name)
                 if not filename:
                     filename = "unknown" 
-                content_buffer.write(BOUNDARY_STRING)
-                content_buffer.write(FORM_FILE % (k, filename,
+                content_list.append(BOUNDARY_STRING)
+                content_list.append(FORM_FILE % (k, filename,
                                     auto_content_type(filename))) 
-                content_buffer.write(v.read())
-                content_buffer.write(NEWLINE) 
-        content_buffer.write(BOUNDARY_END)
+                content_list.append(v.read())
+                content_list.append(NEWLINE) 
+        content_list.append(BOUNDARY_END)
+        header[CONTENT_TYPE] = FORM_COMPLEX_TYPE 
     else:
-        content_buffer.write("&".join(["=".join((url_escape(k),
-                            url_escape(v))) for k, v in payload.items()])) 
-    header[CONTENT_LENGTH] = str(content_buffer.tell())
+        content_list.append("&".join(["=".join((quote_plus(k),
+                            quote_plus(v))) for k, v in payload.items()])) 
+        header[CONTENT_TYPE] = FORM_SIMPLE_TYPE 
+
+    return "".join(content_list)
+
+def post(url, **kwargs): 
+    request_list = []
+    use_ssl = False 
+    url_dict = urlparse(url) 
+    #http basic authorization
+    basicauth = None
+    if "user" in url_dict:
+        basicauth = basic_auth_from_url(url_dict) 
+    #http proxy, mangle header
+    http_proxy = None
+    if kwargs.get("proxy"):
+        http_proxy = proxy_from_url(kwargs["proxy"])
+    else:
+        kwargs["proxy"] = ""
+
+    #generate PATH 
+    use_ssl, port = scheme_from_dict(url_dict) 
+    if not http_proxy:
+        del url_dict["host"]
+        del url_dict["scheme"]
+    if "port" in url_dict: 
+       del url_dict["port"] 
+    path = urlunparse(url_dict) 
+
+    if not header: header = default_header.copy() 
+    header["Host"] = "%s:%d" % (host, port) 
+    content = unparse_post(kwargs["payload"]) 
+    header[CONTENT_LENGTH] = len(content)
     header["PATH"]  = path
     header["METHOD"] = METHOD_POST
     #mangle header for basic authorization
     if basicauth: header["Authorization"] = basicauth 
     #mangle header for basic proxy authorization
     if http_proxy: header["Proxy-Authorization"] = http_proxy
-    request_buffer.write(header_encode(header)) 
+    request_list.append(unparse_header(header)) 
     #generate cookie and HEADER_END
     if cookie:
-        request_buffer.write("Cookie: ")    
-        request_buffer.write(client_cookie_encode(cookie)) 
-        request_buffer.write(HEADER_END)
+        request_list.append("Cookie: ")    
+        request_list.append(unparse_simple_cookie(cookie)) 
+        request_list.append(HEADER_END)
     else:
-        request_buffer.write(NEWLINE)
-    request_buffer.write(content_buffer.getvalue()) 
-    content_buffer.close() 
-    message = request_buffer.getvalue() 
-    request_buffer.close() 
-    return sync_post((host, port), use_ssl, message, proxy=proxy, timeout=timeout) 
+        request_list.append(NEWLINE)
+    request_list.append(content) 
+    kwargs.setdefault("timeout", 0) 
+    #args
+    final = "".join(request_list)
+    connection = (host, port)
+    return send_post(connection, use_ssl, final, kwargs["proxy"], kwargs["timeout"]) 
 
-def url_escape(url):
-    buf = StringIO() 
-    url = bytearray(url) 
+
+def quote(url): 
+    result = [] 
     for char in url: 
         if char in reversed_table:
-            buf.write(reversed_table[char])
+            result.append(reversed_table[char]) 
         elif char in common_chars_table:
-            buf.write(common_chars_table[char])
+            result.append(common_chars_table[char]) 
         else: 
-            buf.write(chr(char))
-    final = buf.getvalue()
-    buf.close()
-    if ' ' in final:
-        return final.replace(' ', '+')
-    return final
+            result.append(char) 
+    return "".join(result)
 
-def url_unescape(url):
-    buf = StringIO()
+def unquote(url): 
+    ret = []
     i = 0
     ulen = len(url)
     while i < ulen:
         char = url[i]
         if char == "%":
-            buf.write(chr(hex_string_table[url[i:i+3]]))
+            pdb.set_trace()
+            ret.append(_hextochr[url[i:i+3]]) 
             i = i+ 3
         else:
-            buf.write(char)
-            i += 1
-    final = buf.getvalue()
-    buf.close()
-    return final
+            ret.append(char)
+            i += 1 
+    return "".join(ret) 
+
+def quote_plus(url): 
+    if ' ' in url:
+        return quote(url.replace(' ', '+')) 
+    return quote(url)
+
+def unquote_plus(url):
+    url = url.replace("+", " ") 
+    return unquote(url) 
 
 def auto_content_type(name):
     dot_offset = name.find(".") 
     if dot_offset < 0:
-        return common_mimetypes["default"] 
+        return commts["default"] 
     else:
-        return common_mimetypes.get(name[dot_offset+1:], common_mimetypes["default"]) 
+        return commts.get(name[dot_offset+1:], commts["default"]) 
 
-def url_encode(url_dict):
-    url_buffer = StringIO()
-    if "scheme" in url_dict:
-        url_buffer.write(url_dict["scheme"])
-        url_buffer.write('://') 
-    if "user" in url_dict:
-        url_buffer.write(url_dict["user"])
-        if "password" in url_dict: 
-            url_buffer.write(":")
-            url_buffer.write(url_dict["password"])
-        url_buffer.write("@")
-    if "host" in url_dict: 
-        url_buffer.write(url_dict["host"]) 
-    if "port" in url_dict:
-        url_buffer.write(":")
-        url_buffer.write(str(port))
-    if "PATH" in url_dict: 
-        if not url_dict["PATH"].startswith("/"):
-            url_buffer.write("/")
-        if not url_dict["PATH"].endswith("/"): 
-            url_buffer.write(url_dict["PATH"])
+
+def urlunparse(urldict):
+    result = []
+    _append = result.append
+    if "scheme" in urldict: 
+        _append(urldict["scheme"] + "//") 
+    if "user" in urldict:
+        _append(urldict["user"]) 
+        if "password" in urldict: 
+            result.append(":" + urldict["password"]) 
+        _append("@") 
+    if "host" in urldict: 
+        _append(urldict["host"]) 
+    if "port" in urldict: 
+        _append(":" + str(port)) 
+    if "path" in urldict: 
+        if not urldict["path"].startswith("/"):
+            result.append("/") 
+        _append(urldict["path"]) 
+        if not urldict["path"].endswith("/"): 
+            result.append("/") 
+    if "query" in urldict: 
+        _append(urldict["query"]) 
+    if "params" in urldict: 
+        _append(";" + ";".join(urldict["params"])) 
+    if "fragment" in urldict:  
+        _append(urldict["fragment"]) 
+    return "".join(result)
+
+def urlparse(url): 
+    """
+    status = 0, scheme
+    status = 1, user
+    status = 2, password
+    status = 3, host
+    status = 4, port
+    status = 5, path
+    status = 6, params,
+    status = 7, query
+    status = 8, frag
+    status = 9, end
+    """
+    result = {} 
+    status = 0
+    mark = 0
+    remain = None 
+    for i, c in enumerate(url): 
+        #not enough
+        if i < mark:
+            continue
+
+        #optimization for letters
+        if c in letters:
+            continue
+        
+        #handle delimiters
+        if c == ":":                   
+            if url[i: i+3] == "://":
+                status = 1
+                result["scheme"] =  url[:i]
+                mark = i + 2 
+                remain = "host" 
+            else: 
+                #host:port
+                if url[i+1].isdigit():
+                    #next port
+                    result["host"] = url[mark:i] 
+                    status = 4 
+                    remain = "port"
+                #user
+                else: 
+                    result["user"] = url[mark:i]  
+                    #next password
+                    status = 2 
+                    remain = "password"
+
+        elif c == "/": 
+            if status >= 5: 
+                continue
+            #host:port, for port
+            if status in (0, 1, 3):
+                result["host"] = url[mark:i]   
+            if status == 4:
+                result["port"] = url[mark:i] 
+            #next possible "path"
+            remain = "path"    
+            status = 5 
+        elif c == "@": 
+            if status != 2:
+                #user@host
+                result["user"] = url[mark:i] 
+            #user:password@host
+            else:
+                result["password"] = url[mark:i] 
+            #next possible "host"
+            remain = "host"
+            status = 3 
+
+        elif c in ";?#":
+            #path
+            if status == 5:
+                result["path"] = url[mark:i] 
+                status = 6 
+            #params
+            elif status == 6:
+                result["params"] = url[mark:i] 
+                status = 7
+            #query
+            elif status == 7:
+                result["query"] = url[mark:i] 
+                status = 8
+            #frag
+            elif status == 8: 
+                result["fragment"] = url[mark:i] 
+                status = 9 
+        #skip normal char
         else: 
-            url_buffer.write(url_dict["PATH"]) 
-    if "query" in url_dict: 
-        url_buffer.write(url_dict["query"])
-    if "params" in url_dict: 
-        url_buffer.write(";")
-        url_buffer.write(";".join(url_dict["params"])) 
-    if "frag" in url_dict:  
-        url_buffer.write(url_dict["frag"])
-    final = url_buffer.getvalue()
-    url_buffer.close()
-    return final
+            continue
 
-def url_decode(url):
-    url_dict = {} 
-    url_find = url.find 
-    protocol_maybe = url_find("://") 
-    account_maybe = url_find("@") 
-    last = 0
-    if protocol_maybe > -1:
-        current_part = protocol_maybe
-        url_dict["scheme"] = url[:protocol_maybe] 
-        last = protocol_maybe + 3  
+        if c == ";":
+            #next params 
+            remain = "params"
+            status = 6
+
+        elif c == "?":
+            #next query
+            remain = "query"
+            status = 7
+
+        elif c == "#":
+            remain = "fragment"
+            status = 8 
+
+        if mark < i:
+            mark = i + 1
+        else:
+            mark += 1
+    #host.com 
+    if not status:
+        result["host"] = url
     else:
-        url_dict["scheme"] = "http"
-    if account_maybe > -1:
-        semi_maybe = url_find(":", last, account_maybe) 
-        if semi_maybe > -1:
-            url_dict["user"] = url[last:semi_maybe]
-            url_dict["password"] = url[semi_maybe + 1:account_maybe]
-        else:
-            url_dict["user"] = url[last:account_maybe]
-        last = account_maybe + 1
-    path_maybe = url_find("/", last)        
-    if path_maybe > -1:
-        port_maybe = url_find(":", last, path_maybe)
-        if port_maybe > -1: 
-            url_dict["host"] = url[last:port_maybe]
-            url_dict["port"] = int(url[port_maybe+1:path_maybe])
-        else:
-            url_dict["host"] = url[last:path_maybe]
-        last = path_maybe
-    else:        
-        port_maybe = url_find(":", last)
-        if port_maybe > -1:
-            url_dict["host"] = url[last:port_maybe]
-            url_dict["port"] = int(url[port_maybe+1:])
-        else:
-            url_dict["host"] = url[last:]
-        url_dict["PATH"] = "/"
-        return url_dict 
-    ulen = len(url)
-    i = last
-    path_found = 0
-    query_found = 0
-    params_found = 0
-    frag_found = 0 
-    next_path_maybe = path_maybe + 1
-    while i < ulen:
-        char = url[i]
-        if char == "?":
-            if i == next_path_maybe:
-                url_dict["PATH"] = "/"
-                continue
-            if not path_found:
-                url_dict["PATH"] = url[last:i]
-                path_found = 1
-            frag_maybe = url_find("#", i)
-            params_maybe= url_find(";", i)
-            x = min(frag_maybe, params_maybe)
-            y = max(frag_maybe, params_maybe) 
-            if x > -1:
-                url_dict["query"] = url[i:x]
-                query_found = 1
-            else:
-                if y > -1:
-                    url_dict["query"] = url[i:y] 
-                    query_found = 1
-                else:
-                    url_dict["query"] = url[i:]
-                    query_found = 1
-                    break
-        elif char == "#":             
-            if i == next_path_maybe:
-                url_dict["PATH"] = "/"
-                continue
-            if not path_found:
-                url_dict["PATH"] = url[last:i]
-                path_found = 1
-            query_maybe = url_find("?", i)
-            params_maybe = url_find(";", i)
-            x = min(query_maybe, params_maybe)
-            y = max(query_maybe, params_maybe)
-            if x > -1:
-                url_dict["frag"] = url[i:x]
-                frag_found = 1
-            else:
-                if y > -1:
-                    url_dict["frag"] = url[i:y]
-                    frag_found = 1
-                else:
-                    url_dict["frag"] = url[i:]
-                    frag_found = 1
-                    break
-        elif char == ";":
-            if i == next_path_maybe:
-                url_dict["PATH"] = "/"
-                continue
-            if not path_found:
-                url_dict["PATH"] = url[lat:i]
-                path_found = 1
-            query_maybe = url_find("?", i)
-            frag_maybe = url_find("#", i)
-            x = min(query_maybe, frag_maybe)
-            y = max(query_maybe, frag_maybe)
-            if x > -1:
-                url_dict["params"] = url[i:x]
-                params_found = 1
-            else:
-                if y > -1:
-                    url_dict["params"] = url[i:y]
-                    params_found = 1
-                else:
-                    url_dict["params"] =  url[i:]
-                    params_found = 1
-                    break
-        i += 1 
-    if not any((params_found, query_found, frag_found)):
-        url_dict["PATH"] = url[last:]
-    return url_dict
-    
-def server_cookie_get(server_cookie):
-    buf = StringIO()
-    for cookie in server_cookie:
-        buf.write("%s; " % cookie["cookie"])
-    buf.truncate(buf.tell() - 2) 
-    final = buf.getvalue() 
-    buf.close()
-    return final
+        if mark < len(url):
+            result[remain] = url[mark:]
+    result.setdefault("path", "/")
+    return result        
 
-def client_cookie_encode(client_dict):
-    buf = StringIO()
-    for k,v in client_dict.items():
-        buf.write("%s=%s; " % (k,v))
-    buf.truncate(buf.tell() - 2)
-    final = buf.getvalue()
-    buf.close()
-    return final
+def cookie_full_to_simple(full_cookie):
+    ret = []
+    for cookie in full_cookie:
+        ret.append("%s; " % cookie["cookie"]) 
+    return "".join(ret)[:-2]
 
-def client_cookie_decode(client_cookie):
+def unparse_simple_cookie(simple_cookie_dict):
+    ret = []
+    for k,v in simple_cookie_dict.items():
+        ret.append("%s=%s; " % (k,v))
+    return "".join(ret)[:-2]
+
+def parse_simple_cookie(simple_cookie):
     cookie_dict = {}
-    for cookie in client_cookie.split(";"):
+    for cookie in simple_cookie.split(";"):
         kv = cookie.split("=")
         cookie_dict[kv[0].strip()] = kv[1].strip()
     return cookie_dict
 
-def server_cookie_encode(cookie_list):
-    buf = StringIO()
+def unparse_full_cookie(cookie_list):
+    ret = []
     for cookie_dict in cookie_list:
+        items_list = []
         for k,v in cookie_dict.items():
             if k == "cookie":
-                buf.write('%s; ' % v)
+                item_list.append('%s; ' % v)
                 continue
-            buf.write('%s=%s; ' % (k, v))
-        buf.truncate(buf.tell() - 2)
-        buf.write(NEWLINE)
-    buf.truncate(buf.tell() - 2)
-    final = buf.getvalue() 
-    buf.close()
-    return final
+            item_list.append('%s=%s; ' % (k, v))
+        ret.append("".join(items_list)[:-2])
+        ret.append(NEWLINE) 
+    return "".join(ret)[:-2]
 
-def server_cookie_decode(cookie):
+def parse_full_cookie(cookie):
     cookie_list = [] 
     for line in cookie.split(NEWLINE):
         cookie_dict = OrderedDict()
@@ -825,21 +810,21 @@ def server_cookie_decode(cookie):
         cookie_list.append(cookie_dict)
     return cookie_list
 
-def simple_post_decode(string):
+def parse_simple_post(string):
     post_dict = {}
     for i in string.split("&"): 
         k,v = i.replace("+", " ").split("=") 
-        post_dict[url_unescape(k)] = url_unescape(v)
+        post_dict[unquote_plus(k)] = unquote_plus(v)
     return post_dict
 
-def complex_post_decode(string, boundary):
+def parse_complex_post(string, boundary):
     post_dict = {} 
     bc = bend.rfind("--%s--\r\n" % boundary)
     if bc < 0:
         raise Exception("no boundary end") 
     #skip boundary end
-    for i in string[:bc].split("--%s\r\n" % boundary)[1:]:     
-        header, content = i.split(HEADER_END) 
+    for item in string[:bc].split("--%s\r\n" % boundary)[1:]:     
+        header, content = item.split(HEADER_END) 
         kv = header.split("; ")
         if "Content-Disposition" not in kv[0]:
             raise Exception("no Content-Disposition")
@@ -855,7 +840,7 @@ def complex_post_decode(string, boundary):
                 ch = {}
                 for j in kv[-1].split(NEWLINE):
                     chk, chv = j.split(": ")
-                    ch[url_unescape(chk)] = url_unescape(chv.strip('"'))
+                    ch[unquote_plus(chk)] = unquote_plus(chv.strip('"'))
                 post_dict[k]["header"] = ch 
         #form file
         elif len(kv) == 3: 
@@ -869,18 +854,18 @@ def complex_post_decode(string, boundary):
                 post_dict[k]["filename"] = fn[0].split("=")[1].strip('"')
     return post_dict 
 
-def header_encode(header, client_side=True): 
+def unparse_header(header, client_side=True): 
     if client_side:
         status_line = "".join((header["METHOD"], header["PATH"], " ", HTTP_VERSION, NEWLINE)) 
         del header["METHOD"]
         del header["PATH"]
     else: 
-        status_line = "".join((HTTP_VERSION, " ", http_message[header["STATUS"]], NEWLINE)) 
+        status_line = "".join((HTTP_VERSION, " ", responses[header["STATUS"]], NEWLINE)) 
         del header["STATUS"] 
     body = "".join(["".join((k, ": ", v, NEWLINE)) for k, v in header.items()]) 
     return "".join((status_line, body))
 
-def header_decode(header_string, client_side=True): 
+def parse_header(header_string, client_side=True): 
     header_dict = {}
     cookie = None 
     #status line 
@@ -894,22 +879,22 @@ def header_decode(header_string, client_side=True):
         header_dict["METHOD"] = status[0] 
         header_dict["PATH"] = status[1] 
 
-    set_cookie_maybe = False
+    cookie_set = False
     
     for line in parts[1:]: 
         kv = [x.strip() for x in line.split(":")] 
         #maybe multiple lines in Set-Cookie
         #bad luck if : in Set-Cookie
-        if len(kv) == 1 and set_cookie_maybe: 
+        if len(kv) == 1 and cookie_set: 
             header_dict[SET_COOKIE] += "".join((NEWLINE, kv)) 
             continue
         #maybe : in value
         if len(kv) > 2:
             kv[1] = ":".join(kv[1:]) 
-        set_cookie_maybe = False
+        cookie_set = False
         #merge multiple Set-Cookie
         if kv[0] == SET_COOKIE:
-            set_cookie_maybe = True 
+            cookie_set = True 
             if SET_COOKIE in header_dict:
                 header_dict[SET_COOKIE] += "%s%s" % (NEWLINE, kv[1])
             else:
@@ -923,8 +908,10 @@ def header_decode(header_string, client_side=True):
                 header_dict[COOKIE] = kv[1]
             continue
         header_dict[kv[0]] = kv[1]
+    #parse cookie 
     if SET_COOKIE in header_dict:
-        cookie = server_cookie_decode(header_dict[SET_COOKIE])
+        cookie = parse_full_cookie(header_dict[SET_COOKIE])
     if COOKIE in header_dict:
-        cookie = client_cookie_decode(header_dict[COOKIE])
+        cookie = parse_simple_cookie(header_dict[COOKIE])
+
     return header_dict, cookie
