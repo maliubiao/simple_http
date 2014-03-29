@@ -1,5 +1,5 @@
 """
-simple http library
+simple http library 
 """
 
 
@@ -11,8 +11,8 @@ import pdb
 import signal
 import base64
 import json
-from string import letters
 
+from string import letters 
 from uuid import uuid4
 from struct import pack, unpack
 from cStringIO import StringIO 
@@ -26,8 +26,52 @@ except:
     has_ssl = False
 
 
+#url reversed characters 
+reversed_table = { 
+        #0x21: "%21", #!
+        "\x23": "%23", ##
+        "\x24": "%24", #$
+        "\x26": "%26", #&
+        #0x27: "%27", #'
+        #0x28: "%28", #(
+        #0x29: "%29", #)
+        "\x2A": "%2A", #*
+        "\x2B": "%2B", #+
+        "\x2C": "%2C", #,
+        "\x2F": "%2F", #/
+        "\x3A": "%3A", #:
+        "\x3B": "%3B", #;
+        "\x3D": "%3D", #=
+        "\x3F": "%3F", #?
+        "\x40": "%40", #@
+        #0x5B: "%5B", #[
+        #0x5D: "%5D" #]
+        }
 
-default_header = { "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Accept-Encoding": "gzip, deflate",
+#url common characters
+common_chars_table = {
+        "\x20": "%20", #space
+        "\x22": "%22", #"
+        "\x25": "%25", #%
+        "\x2D": "%2D", #-
+        #0x2E: "%2E", #.
+        "\x3C": "%3C", #<
+        "\x3E": "%3E", #>
+        "\x5C": "%5C", #\
+        "\x5E": "%5E", #^
+        #0x5F: "%5F", #_                
+        "\x60": "%60", #`
+        "\x7B": "%7B", #{
+        "\x7C": "%7C", #|
+        "\x7D": "%7D", #}
+        "\x7E": "%7E" #~
+        }
+
+
+
+default_header = {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Encoding": "gzip, deflate",
         "Accept-Language": "zh,zh-cn;q=0.8,en-us;q=0.5,en;q=0.3", 
         "Connection": "keep-alive",
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:25.0) Gecko/20100101 Firefox/25.0"
@@ -135,70 +179,20 @@ responses = {
 default_timeout = 20 
 
 HTTP_VERSION = "HTTP/1.1"
-HEADER_END = "\x0d\x0a\x0d\x0a"
-NEWLINE = "\x0d\x0a"
+HEADER_END = "\x0d\x0a\x0d\x0a" 
 METHOD_GET = "GET "
 METHOD_POST = "POST "
 METHOD_DELETE = "DELETE "
 
-
-COOKIE = "Cookie"
-SET_COOKIE = "Set-Cookie"
-
-CONTENT_ENCODING = "Content-Encoding"
-CONTENT_TYPE = "Content-Type"
-TRANSFER_ENCODING = "Transfer-Encoding"
-CONTENT_LENGTH = "Content-Length"
 
 BOUNDARY = uuid4().hex
 BOUNDARY_STRING = "--%s\r\n" % BOUNDARY
 BOUNDARY_END = "--%s--" % BOUNDARY
 FORM_FILE = 'Content-Disposition: form-data; name="%s"; filename="%s"\r\nContent-Type: %s\r\n\r\n' 
 FORM_STRING = 'Content-Disposition: form-data; name="%s"\r\n\r\n%s\r\n' 
-
 FORM_SIMPLE_TYPE = "application/x-www-form-urlencoded"
 FORM_COMPLEX_TYPE = "multipart/form-data; boundary=%s" % BOUNDARY 
 
-#url reversed characters 
-reversed_table = { 
-        #0x21: "%21", #!
-        "\x23": "%23", ##
-        "\x24": "%24", #$
-        "\x26": "%26", #&
-        #0x27: "%27", #'
-        #0x28: "%28", #(
-        #0x29: "%29", #)
-        "\x2A": "%2A", #*
-        "\x2B": "%2B", #+
-        "\x2C": "%2C", #,
-        "\x2F": "%2F", #/
-        "\x3A": "%3A", #:
-        "\x3B": "%3B", #;
-        "\x3D": "%3D", #=
-        "\x3F": "%3F", #?
-        "\x40": "%40", #@
-        #0x5B: "%5B", #[
-        #0x5D: "%5D" #]
-        }
-
-#url common characters
-common_chars_table = {
-        "\x20": "%20", #space
-        "\x22": "%22", #"
-        "\x25": "%25", #%
-        "\x2D": "%2D", #-
-        #0x2E: "%2E", #.
-        "\x3C": "%3C", #<
-        "\x3E": "%3E", #>
-        "\x5C": "%5C", #\
-        "\x5E": "%5E", #^
-        #0x5F: "%5F", #_                
-        "\x60": "%60", #`
-        "\x7B": "%7B", #{
-        "\x7C": "%7C", #|
-        "\x7D": "%7D", #}
-        "\x7E": "%7E" #~
-        }
 
 
 #ascii -> %hex
@@ -285,8 +279,8 @@ def general_get(url, **kwargs):
     #reuqest path
     path = urlunparse(url_dict) 
     if kwargs.get("httpmethod"):
-        header["METHOD"] = kwargs["httpmethod"] 
-    header["PATH"] = path 
+        header["method"] = kwargs["httpmethod"] 
+    header["path"] = path 
     #for basic authorization 
     if basicauth: header["Authorization"] = basicauth 
     #for basic proxy authorization
@@ -298,7 +292,7 @@ def general_get(url, **kwargs):
         request_list.append(unparse_simple_cookie(kwargs["cookie"])) 
         request_list.append(HEADER_END) 
     else:
-        request_list.append(NEWLINE) 
+        request_list.append("\r\n") 
     if not kwargs.get("timeout"):
         kwargs["timeout"] = 0 
     #args for send_http
@@ -312,7 +306,7 @@ def handle_chunked(data, normal_stream):
     next_chunk = 0
     this_chunk = 0 
     while True:
-        next_chunk = data.find(NEWLINE, prev_chunk)
+        next_chunk = data.find("\r\n", prev_chunk)
         if next_chunk < 0: return
         try:
             this_chunk = int(data[prev_chunk:next_chunk], 16)
@@ -332,36 +326,24 @@ def wait_response(connection, normal_stream, timeout=0):
     has_header = False 
     header_buffer = StringIO()
     content_buffer = StringIO()
-    has_range = False
-    average = 0 
-    average_count = 0
-    read_count = 4096 
+    has_range = False 
     noheader = 0 
+
     #if recv blocks, interrupt syscall after timeout
     if timeout:
         signal.alarm(timeout) 
         def wait_timeout(signum, frame):
             return
         signal.signal(signal.SIGALRM, wait_timeout) 
+
     while True: 
         try:
-            data = connection.recv(int(read_count)) 
+            data = connection.recv(40960) 
         #interrupted syscall
-        except socket.error, err:
-            data = content_buffer.getvalue()
-            normal_stream.write(data)
+        except socket.error, err: 
+            normal_stream.write(content_buffer.getvalue())
             content_buffer.close() 
-            return header, cookie
-        #dynamic read_count control
-        average_count += 1 
-        average += len(data) 
-        if average_count == 2: 
-            if average / average_count > (0.8*read_count):
-                read_count = 1.25 * read_count
-            else:
-                read_count = 0.8 * read_count
-            average = 0
-            average_count = 0 
+            return header, cookie 
         #read header 
         if not has_header: 
             if header_buffer:
@@ -372,19 +354,19 @@ def wait_response(connection, normal_stream, timeout=0):
                 noheader += 1 
                 if noheader > 2:
                     content_buffer.close()
-                    raise socket.error("header too large or not a header")
+                    raise socket.error("not a header")
                 else:
                     header_buffer.write(data)
                     continue
             else:
                 header_buffer.close() 
             header, cookie = parse_header(data[:header_end]) 
-            if CONTENT_LENGTH in header:
-                total_length = int(header[CONTENT_LENGTH])
+            if "Content-Length" in header:
+                total_length = int(header["Content-Length"])
             else:
                 length_unkown = True 
             #maybe chunked stream
-            if header.get(TRANSFER_ENCODING) == "chunked": 
+            if header.get("Transfer-Encoding") == "chunked": 
                 chunked = True
 
             if header.get("Accept-Ranges") == "bytes":
@@ -473,10 +455,10 @@ def send_http(connection, use_ssl, message, proxy=None, timeout=0):
     #handle compressed stream: gzip, deflate 
     try: 
         #maybe gzip stream
-        if header.get(CONTENT_ENCODING) == "gzip": 
+        if header.get("Content-Encoding") == "gzip": 
             final = zlib.decompress(content_buffer.getvalue(),
                     16+zlib.MAX_WBITS)  
-        elif header.get(CONTENT_ENCODING) == "deflate":
+        elif header.get("Content-Encoding") == "deflate":
             final = zlib.decompress(content_buffer.getvalue(),
                     -zlib.MAX_WBITS)  
         else:
@@ -511,13 +493,13 @@ def unparse_post(payload):
                 content_list.append(FORM_FILE % (k, filename,
                                     auto_content_type(filename))) 
                 content_list.append(v.read())
-                content_list.append(NEWLINE) 
+                content_list.append("\r\n") 
         content_list.append(BOUNDARY_END)
-        header[CONTENT_TYPE] = FORM_COMPLEX_TYPE 
+        header["Content-Type"] = FORM_COMPLEX_TYPE 
     else:
         content_list.append("&".join(["=".join((quote_plus(k),
                             quote_plus(v))) for k, v in payload.items()])) 
-        header[CONTENT_TYPE] = FORM_SIMPLE_TYPE 
+        header["Content-Type"] = FORM_SIMPLE_TYPE 
 
     return "".join(content_list)
 
@@ -536,7 +518,7 @@ def post(url, **kwargs):
     else:
         kwargs["proxy"] = ""
 
-    #generate PATH 
+    #generate path 
     use_ssl, port = scheme_from_dict(url_dict) 
     if not http_proxy:
         del url_dict["host"]
@@ -548,9 +530,9 @@ def post(url, **kwargs):
     if not header: header = default_header.copy() 
     header["Host"] = "%s:%d" % (host, port) 
     content = unparse_post(kwargs["payload"]) 
-    header[CONTENT_LENGTH] = len(content)
-    header["PATH"]  = path
-    header["METHOD"] = METHOD_POST
+    header["Content-Length"] = len(content)
+    header["path"]  = path
+    header["method"] = METHOD_POST
     #mangle header for basic authorization
     if basicauth: header["Authorization"] = basicauth 
     #mangle header for basic proxy authorization
@@ -562,7 +544,7 @@ def post(url, **kwargs):
         request_list.append(unparse_simple_cookie(cookie)) 
         request_list.append(HEADER_END)
     else:
-        request_list.append(NEWLINE)
+        request_list.append("\r\n")
     request_list.append(content) 
     kwargs.setdefault("timeout", 0) 
     #args
@@ -588,8 +570,7 @@ def unquote(url):
     ulen = len(url)
     while i < ulen:
         char = url[i]
-        if char == "%":
-            pdb.set_trace()
+        if char == "%": 
             ret.append(_hextochr[url[i:i+3]]) 
             i = i+ 3
         else:
@@ -760,10 +741,11 @@ def urlparse(url):
     return result        
 
 def cookie_full_to_simple(full_cookie):
-    ret = []
+    ret = {}
     for cookie in full_cookie:
-        ret.append("%s; " % cookie["cookie"]) 
-    return "".join(ret)[:-2]
+        key, value = cookie["cookie"].split("=")
+        ret[key] = value 
+    return ret
 
 def unparse_simple_cookie(simple_cookie_dict):
     ret = []
@@ -788,12 +770,12 @@ def unparse_full_cookie(cookie_list):
                 continue
             item_list.append('%s=%s; ' % (k, v))
         ret.append("".join(items_list)[:-2])
-        ret.append(NEWLINE) 
+        ret.append("\r\n") 
     return "".join(ret)[:-2]
 
 def parse_full_cookie(cookie):
     cookie_list = [] 
-    for line in cookie.split(NEWLINE):
+    for line in cookie.split("\r\n"):
         cookie_dict = OrderedDict()
         for index, part in enumerate(line.split(";")):
             #cookie, kv
@@ -836,17 +818,17 @@ def parse_complex_post(string, boundary):
         #form name
         if len(kv) == 2: 
             #maybe Content-Type 
-            if NEWLINE in kv[-1]: 
+            if "\r\n" in kv[-1]: 
                 ch = {}
-                for j in kv[-1].split(NEWLINE):
+                for j in kv[-1].split("\r\n"):
                     chk, chv = j.split(": ")
                     ch[unquote_plus(chk)] = unquote_plus(chv.strip('"'))
                 post_dict[k]["header"] = ch 
         #form file
         elif len(kv) == 3: 
-            if NEWLINE in kv[2]: 
+            if "\r\n" in kv[2]: 
                 ch = {}
-                fn = kv[-1].split(NEWLINE)
+                fn = kv[-1].split("\r\n")
                 for j in fn[1:]:
                     chk, chv = j.split(": ")
                     ch[chk] = chv.strip('"')
@@ -856,62 +838,63 @@ def parse_complex_post(string, boundary):
 
 def unparse_header(header, client_side=True): 
     if client_side:
-        status_line = "".join((header["METHOD"], header["PATH"], " ", HTTP_VERSION, NEWLINE)) 
-        del header["METHOD"]
-        del header["PATH"]
+        status_line = "".join((header["method"], header["path"], " ", HTTP_VERSION, "\r\n")) 
+        del header["method"]
+        del header["path"]
     else: 
-        status_line = "".join((HTTP_VERSION, " ", responses[header["STATUS"]], NEWLINE)) 
-        del header["STATUS"] 
-    body = "".join(["".join((k, ": ", v, NEWLINE)) for k, v in header.items()]) 
+        status_line = "".join((HTTP_VERSION, " ", responses[header["status"]], "\r\n")) 
+        del header["status"] 
+    body = "".join(["".join((k, ": ", v, "\r\n")) for k, v in header.items()]) 
     return "".join((status_line, body))
 
-def parse_header(header_string, client_side=True): 
-    header_dict = {}
-    cookie = None 
-    #status line 
-    parts = header_string.split(NEWLINE)
-    status = parts[0].split(" ") 
-    if client_side: 
-        header_dict["PROTOCOL"] = status[0] 
-        header_dict["STATUS"] = int(status[1]) 
-        header_dict["MESSAGE"] = " ".join(status[2:])
-    else:
-        header_dict["METHOD"] = status[0] 
-        header_dict["PATH"] = status[1] 
 
-    cookie_set = False
-    
+def parse_header(header_string): 
+    #status line 
+    server_side = True
+    parts = header_string.split("\r\n")
+    status = parts[0].split(" ") 
+    status_dict = {}
+    if status[0].startswith("HTTP/1.1"): 
+        status_dict["protocol"] = status[0] 
+        status_dict["status"] = int(status[1]) 
+        status_dict["message"] = " ".join(status[2:])
+    else:
+        server_side = False
+        status_dict["method"] = status[0] 
+        status_dict["path"] = status[1] 
+        status_dict["protocol"] = status[-1] 
+    #[(k, v), (k, v)]
+    header_list = [] 
     for line in parts[1:]: 
         kv = [x.strip() for x in line.split(":")] 
-        #maybe multiple lines in Set-Cookie
-        #bad luck if : in Set-Cookie
-        if len(kv) == 1 and cookie_set: 
-            header_dict[SET_COOKIE] += "".join((NEWLINE, kv)) 
-            continue
         #maybe : in value
         if len(kv) > 2:
             kv[1] = ":".join(kv[1:]) 
-        cookie_set = False
-        #merge multiple Set-Cookie
-        if kv[0] == SET_COOKIE:
-            cookie_set = True 
-            if SET_COOKIE in header_dict:
-                header_dict[SET_COOKIE] += "%s%s" % (NEWLINE, kv[1])
-            else:
-                header_dict[SET_COOKIE] = kv[1]
+        #maybe multiple lines
+        if len(kv) == 1: 
+            header_list[-1][1] += "".join(("\r\n", kv)) 
             continue
-        #merge multiple Cookie
-        if kv[0] == COOKIE:
-            if COOKIE in header_dict:
-                header_dict[COOKIE] += "".join(("; ", kv[1]))
-            else:
-                header_dict[COOKIE] = kv[1]
-            continue
-        header_dict[kv[0]] = kv[1]
-    #parse cookie 
-    if SET_COOKIE in header_dict:
-        cookie = parse_full_cookie(header_dict[SET_COOKIE])
-    if COOKIE in header_dict:
-        cookie = parse_simple_cookie(header_dict[COOKIE])
+        header_list.append((kv[0], kv[1]))
 
+    header_dict = dict(header_list) 
+    header_dict.update(status_dict)
+    cookie = "" 
+    for item in header_list:
+        if item[0].startswith("Set-Cookie"):
+            if cookie:            
+                cookie += "".join(("\r\n", item[1]))
+            else:
+                cookie = item[1] 
+                del header_dict[item[0]]   
+        if item[0] == "Cookie":
+            if cookie:
+                cookie += "".join(("; ", item[1]))
+            else:
+                cookie = item[1] 
+                del header_dict[item[0]]
+
+    if server_side:
+        cookie = parse_full_cookie(cookie) 
+    else:
+        cookie = parse_simple_cookie(cookie)
     return header_dict, cookie
