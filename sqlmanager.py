@@ -21,7 +21,7 @@ def sigusr1_handler(signum, frame):
 def home_get(request, response): 
     response.update({ 
             "header": {
-                "STATUS": 403,
+                "status": 403,
                 "Content-Encoding": "gzip",
                 "Content-Type": "text/html", 
                 },
@@ -53,21 +53,21 @@ def home_post(request, response):
         return 
     if "sql" in request_stream: 
         if not mycon.is_connected():
-            mycon.connect("localhost", 3306, "root", "!20111992ma", "mysql")
+            mycon.connect("localhost", 3306, "root", "sample", "mysql")
         sql = request_stream["sql"] 
-        try:
+        try: 
             query = mycon.query(sql)
             if isinstance(query, tuple):
                 result = json.dumps(query)
             else:
-                fields = json.dumps(query.fields)
-                rows = json.dumps(query.rows) 
-                result = json.dumps({"field": fields, "row": rows})
+                fields = json.dumps(query.fields, ensure_ascii=False)
+                rows = json.dumps(query.rows, ensure_ascii=False) 
+                result = json.dumps({"field": fields, "row": rows}, ensure_ascii=False)
         except Exception, err:
             result = json.dumps(err.args)
         response.update({
             "header": {
-                "STATUS": 200,
+                "status": 200,
                 "Content-Encoding": "gzip",
                 "Content-Type": "application/json" 
                 },
@@ -76,27 +76,29 @@ def home_post(request, response):
     else: 
         raise Exception((nonblocking.HTTP_LEVEL, 400)) 
 
-home_application = {
+sqlapp = {
         "url": r"^/query$",
         "GET": home_get,
         "POST": home_post 
         }
 
-nonblocking.install(home_application)
+nonblocking.install(sqlapp)
 nonblocking.install_statics("ui", os.path.abspath("./statics"), nonblocking.STATICS_MMAP)
 
+"""
 try:
     _proc.setrlimit(_proc.RLIMIT_NOFILE, (20480, 40960))
 except OSError, err:
     print "setrlimit failed, quit: %s" % str(err)
     exit(0)
+"""
 
 signal.signal(signal.SIGUSR1, sigusr1_handler)
 nonblocking.log_level = nonblocking.LOG_ALL
 
-nonblocking.run_as_user("richard_n")
+#nonblocking.run_as_user("richard_n")
 nonblocking.server_config() 
-nonblocking.daemonize() 
+#nonblocking.daemonize() 
 
 nonblocking.poll_open(("localhost", 8800)) 
 print "worker at %d on cpu %d" % (8800, 0)

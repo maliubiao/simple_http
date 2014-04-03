@@ -30,15 +30,15 @@ def parse(stream):
     gzip_maybe = None
     deflate_maybe = None
     chunked_maybe = None
-    header_end = stream.find(simple_http.HEADER_END)
+    header_end = stream.find("\r\n\r\n")
     if header_end < 0:
         raise Exception("no header")
-    header, cookie = simple_http.header_decode(stream[:header_end]) 
-    if header.get(simple_http.CONTENT_ENCODING) == "gzip":
+    header, cookie = simple_http.parse_header(stream[:header_end]) 
+    if header.get("Content-Encoding") == "gzip":
         gzip_maybe = True
-    if header.get(simple_http.CONTENT_ENCODING) == "deflate":
+    if header.get("Content-Encoding") == "deflate":
         deflate_maybe = True
-    if header.get(simple_http.TRANSFER_ENCODING) == "chunked":
+    if header.get("Content-Encoding") == "chunked":
         chunked_maybe = True
     stream_buffer = StringIO() 
     content = stream[header_end+4:]

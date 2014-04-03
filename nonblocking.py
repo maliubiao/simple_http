@@ -18,7 +18,8 @@ import simple_gzip
 from time import time 
 from time import sleep
 from simple_http import auto_content_type
-from simple_http import simple_post_decode
+from simple_http import parse_simple_post
+from simple_http import parse_header
 from socket import inet_ntoa
 from struct import unpack
 from cStringIO import StringIO
@@ -68,10 +69,8 @@ COMMAND_IP_FORBIDDEN = 0x1 << 1
 COMMAND_FLUSH_LOG = 0x1 << 2 
 
 #http consts
-HEADER_END = simple_http.HEADER_END
-NEWLINE = simple_http.NEWLINE 
-HTTP_VERSION = simple_http.HTTP_VERSION
-header_decode = simple_http.header_decode
+HEADER_END = "\r\n\r\n"
+NEWLINE = "\r\n" 
 gzip_write = simple_gzip.write
 
 #socket consts
@@ -91,21 +90,10 @@ _fcntl = fcntl.fcntl
 F_SETFL = fcntl.F_SETFL
 O_NONBLOCK = os.O_NONBLOCK
 
-#os consts
-_read = os.read
-_write = os.write 
-_close = os.close
-
 #file permisiion bits
 permX = 0b001
 permW = 0b010
 permR = 0b100
-
-#alias
-_accept = None
-_poll = None
-_register = None 
-
 
 
 site_allowed = [
@@ -125,7 +113,7 @@ source_domain_allowed = {
             "http://127.0.0.1:80"]
         }
 
-csp_directive = [
+csp_directive = (
     "default-src",
     "frame-src",
     "img-src",
@@ -133,7 +121,7 @@ csp_directive = [
     "style-src",
     "media-src",
     "object-src",
-    "connect-src"]
+    "connect-src")
 
 #anti XSRF
 default_header = {
@@ -146,16 +134,16 @@ default_header = {
 
 def set_domain_allowed(policy):
     if not isinstance(policy, dict):
-        raise Exception("domains must be a dict")
-    policy_buffer = StringIO() 
+        raise Exception("domains must be a dict") 
+    policy_list = []
     for rule in policy:    
-        if rule in csp_directive:
-            policy_buffer.write(i + "\x20")
-            for value in policy[rule]: 
-                policy_buffer.write(value+"\x20")
-            policy_buffer.write(";") 
-    default_header["X-Content-Security-Policy"] = policy_buffer.getvalue()
-    policy_buffer.close()
+        if rule not in csp_directive:
+            continue
+        policy_list.extend((rule, "\x20")) 
+        for value in policy[rule]: 
+            policy_list.extend((value, "\x20"))
+        policy_list.append(";") 
+    default_header["X-Content-Security-Policy"] = "".join(policy_list) 
 
 def set_refer_allowed(refers):
     global refer_allowed 
@@ -235,7 +223,7 @@ def server_config():
     f = open(data_fifo, "r+")
     data_fd = os.dup(f.fileno())
     f.close()
-    #log
+    #main log
     if os.path.exists(NONBLOCKING_LOG): 
         log_file = open(NONBLOCKING_LOG, "a+")
     else:
@@ -245,8 +233,7 @@ def server_config():
     
 
 def poll_open(connection):
-    global epm, sock, sock_fd
-    global _accept, _poll, _register 
+    global epm, sock, sock_fd 
     #epoll and socket
     epm = select.epoll()
     sock = _socket(AF_INET, SOCK_STREAM)
@@ -256,10 +243,6 @@ def poll_open(connection):
     sock.listen(MAX_LISTEN) 
     epm.register(sock_fd, EPOLLIN | EPOLLERR | EPOLLHUP)
     epm.register(data_fd, EPOLLIN|EPOLLERR) 
-    #alias
-    _poll = epm.poll
-    _register = epm.register 
-    _accept = sock.accept
 
 
 def poll_close(): 
@@ -272,7 +255,7 @@ def poll_close():
     sock.close() 
     try:
         epm.unregister(data_fd) 
-        _close(f) 
+        os.close(f) 
     except:
         pass 
     epm.close()
@@ -292,60 +275,76 @@ def handle_new_connection(connection):
         con.close()
         return
     incoming_fd = con.fileno()
-    _register(incoming_fd,
+    epm.register(incoming_fd,
             EPOLLIN | EPOLLOUT |EPOLLET | EPOLLERR | EPOLLHUP) 
     _fcntl(incoming_fd, F_SETFL, O_NONBLOCK)
     cons[incoming_fd] = (con, addr)
 
 
+def log_err(args): 
+    final = None
+    if len(args) < 3:
+        final = str(args) 
+    if not final:
+        traceback = args[2]
+        final = "error: %s line: %d, file: %s" % (
+                str(traceback[1]),
+                traceback[2].tb_lineno,
+                traceback[2].f_code.co_filename) 
+    if log_buffer:
+        log_buffer.write(final+"\n") 
+        if log_buffer.tell() >= LOG_BUFFER_SIZE:
+            log_file.write(log_buffer.getvalue()) 
+            log_buffer.truncate(0) 
+    else:
+        log_file.write(final+"\n")
+    log_file.flush() 
+
+
+def handle_events(events_list): 
+    for fd, events in events_list: 
+        if fd == sock_fd: 
+            if events & (EPOLLERR | EPOLLHUP):
+                raise Exception("main socket error") 
+            handle_new_connection(sock.accept())
+            continue 
+        try: 
+            handle_http_request(fd, events) 
+        except Exception as err: 
+            args = err.args
+            if log_level & LOG_ERR: 
+                log_err(args)
+            if len(args) == 3:
+                if fd not in cons:    
+                    continue
+                handle_server_error(fd, args)
+         
 def poll_wait(): 
     global sucess, failed 
     has_in_event = True 
     while True: 
         if has_in_event:
-            sleep_time = 0.000001
+            sleep_time = 0
             has_in_event = False
         else:
-            sleep_time = 0.01
+            sleep_time = 0.001
         sleep(sleep_time) 
-        for fd, events in _poll(1):
-            if fd == sock_fd: 
-                if events & (EPOLLERR | EPOLLHUP):
-                    raise Exception("main socket error") 
-                handle_new_connection(_accept())
-                continue 
-            try: 
-                handle_http_request(fd, events) 
-                sucess += 1
-            except Exception, err: 
-                args = err.args
-                final = None
-                if log_level & LOG_ERR: 
-                    if len(args) < 3:
-                        final = str(args) 
-                    if not final:
-                        traceback = args[2]
-                        final = "error: %s line: %d, file: %s" % (
-                                str(traceback[1]),
-                                traceback[2].tb_lineno,
-                                traceback[2].f_code.co_filename) 
-                    if log_buffer:
-                        log_buffer.write(final+"\n") 
-                        if log_buffer.tell() >= LOG_BUFFER_SIZE:
-                            log_file.write(log_buffer.getvalue()) 
-                            log_buffer.truncate(0) 
-                    else:
-                        log_file.write(final+"\n")
-                    log_file.flush() 
-                if len(args) == 3:
-                    if fd in cons:    
-                        handle_server_error(fd, err.args)
-                failed += 1 
+        try:
+            events_list = epm.poll(1)
+        except IOError as e:
+            continue 
+        try:
+            handle_events(events_list)
+            sucess += 1
+        except Exception as e:
+            log_err(e.args)
+            failed += 1
+
 
 def clean_queue(fd): 
     if fd not in cons:
         epm.unregister(fd)
-        _close(fd)
+        os.close(fd)
     con, addr= cons[fd]
     #maybe tcp RST
     try:
@@ -371,6 +370,7 @@ def install(app):
         raise Exception("no url specified in %s" % app)
     #precompiled regex
     applications[re.compile(app["url"])] = app    
+
     
 def uninstall(url):    
     if not isinstance(url, str) and not isinstance(url, unicode):
@@ -378,31 +378,37 @@ def uninstall(url):
     if not applications.get(url):
         del applications[url]
 
-def scan_statics(topdir, path, mode): 
+
+def load_file(args, d, f): 
+    topdir, path, mode = args
+    prefix_path = "/%s/%s" % (d.replace(path, topdir), f)
+    if mode & STATICS_PRELOAD:
+        itsname = "%s/%s" % (d, f)
+        itsfile = open(itsname, "r") 
+        return (prefix_path,
+                f, itsfile.read(), None)
+        itsfile.close()
+    elif mode & STATICS_MMAP:
+        itsname = "%s/%s" % (d, f)
+        itsfile = open(itsname, "r+")
+        size = os.stat(itsname).st_size
+        itsmap = mmap.mmap(itsfile.fileno(), 0, mmap.MAP_SHARED)
+        itsfile.close() 
+        return (prefix_path, f, itsmap, size)
+    elif mode & STATICS_NORMAL:
+        return (f, None, None)
+
+
+def scan_statics(*args): 
+    topdir, path, mode = args
     if path.startswith("."):
         raise Exception("absolute path only") 
     for d, subs, files in os.walk(path): 
-        for f in files: 
-            if mode & STATICS_PRELOAD:
-                itsname = "%s/%s" % (d, f)
-                itsfile = open(itsname, "r") 
-                yield ("/%s/%s" % (d.replace(path, topdir), f),
-                        f, itsfile.read(), None)
-                itsfile.close()
-            elif mode & STATICS_MMAP:
-                itsname = "%s/%s" % (d, f)
-                itsfile = open(itsname, "r+")
-                size = os.stat(itsname).st_size
-                itsmap = mmap.mmap(itsfile.fileno(), 0, mmap.MAP_SHARED)
-                itsfile.close() 
-                yield ("/%s/%s" % (d.replace(path, topdir), f),
-                        f, itsmap, size)
-            elif mode & STATICS_NORMAL:
-                yield ("/%s/%s" % (d.replace(path, topdir), f),
-                        f, None, None)
+        for f in files:    
+            yield load_file(args, d, f)
 
 def install_statics(topdir, path, mode): 
-    for url, name, value, size in scan_statics(topdir, path, mode):
+    for url, name, value, size in scan_statics(topdir, path, mode): 
         if url not in statics: 
             statics[url] = (mode, name, value, size)
         else:
@@ -419,7 +425,7 @@ def handle_server_error(fd, args):
     if (len(args) != 3) or (not isinstance(code, int)):
         return
     error_header = default_header.copy() 
-    error_header["STATUS"] = code 
+    error_header["status"] = code 
     response = {}
     if code == 500:
         response.update({
@@ -451,7 +457,7 @@ def handle_server_error(fd, args):
     clean_queue(fd)
 
 def handle_http_error(request, response):
-    code = response["header"]["STATUS"] 
+    code = response["header"]["status"] 
     if code == 400: 
         response.update({ 
             "stream": "Page Not Found"
@@ -467,7 +473,7 @@ def handle_http_error(request, response):
         log_file.flush()
 
 def static_handler(request, response): 
-    path = request["header"]["PATH"]
+    path = request["header"]["path"]
     res = statics[path]
     mode = res[0]
     name = res[1] 
@@ -475,7 +481,7 @@ def static_handler(request, response):
     if mode == STATICS_PRELOAD:
         response.update({
                 "header": {
-                    "STATUS": 200,
+                    "status": 200,
                     "Content-Type": auto_content_type(name)
                     },
                 "stream": res[2]
@@ -485,7 +491,7 @@ def static_handler(request, response):
         f = open(name, "r")
         response.update({
             "header": {
-                "STATUS": 200,
+                "status": 200,
                 "Content-Type": auto_content_type(name)
                 },
             "stream": f.read()
@@ -495,7 +501,7 @@ def static_handler(request, response):
         itsmap = res[2]
         response.update({
                 "header": {
-                    "STATUS": 200,
+                    "status": 200,
                     "Content-Type": auto_content_type(name)
                     },
                 "stream": itsmap.read(res[3])
@@ -504,8 +510,8 @@ def static_handler(request, response):
 
 def url_handler(request, response): 
     header = request["header"]
-    url = header.get("PATH", "/")
-    method = header["METHOD"]
+    url = header.get("path", "/")
+    method = header["method"]
     response["header"] = default_header.copy()
     match = False 
     for pattern in applications:
@@ -541,7 +547,7 @@ def url_handler(request, response):
     if not match: 
         response.update({
             "header": {
-                "STATUS": 400
+                "status": 400
                 },
             "stream": ""
             })
@@ -552,28 +558,45 @@ def write_response(response, outgoing_buf):
     content_buf = StringIO()
     #gzip stream
     header = response["header"] 
-    if header.get("Content-Encoding"):
-        if "Vary" in header:
-            header["Vary"] += ", Accept-Encoding"
-        else:
-            header["Vary"] = "Accept-Encoding"
-        if "gzip" in header["Content-Encoding"]:   
-            gzip_write(response["stream"], content_buf) 
-            header["Content-Length"] = str(content_buf.tell()) 
-    else: 
+    if "Vary" in header:
+        header["Vary"] += ", Accept-Encoding"
+    else:
+        header["Vary"] = "Accept-Encoding"
+    if "gzip" in header.get("Content-Encoding", ""): 
+        gzip_write(response["stream"], content_buf) 
+    else:
         content_buf.write(response["stream"]) 
-        if not header.get("Content-Length"):
-            header["Content-Length"] = content_buf.tell() 
+    header["Content-Length"] = str(content_buf.tell())
     #add cookie to header 
     if "cookie" in response:
-        cookie = simple_http.server_cookie_encode(response["cookie"])
+        cookie = simple_http.unparse_full_cookie(response["cookie"])
         header["Set-Cookie"] = cookie 
-    data = simple_http.header_encode(header, False) 
+    data = simple_http.unparse_header(header, False) 
     #write header and content 
-    outgoing_buf.write(data)
-    outgoing_buf.write(NEWLINE) 
-    outgoing_buf.write(content_buf.getvalue()) 
+    outgoing_buf.write("".join((data, NEWLINE, content_buf.getvalue()))) 
     content_buf.close()
+
+
+def handle_message(fd, events): 
+    command = ord(os.read(fd, 1))
+    #add forbidden ip 
+    if command & COMMAND_IP_FORBIDDEN:
+        try:
+            many = unpack("I", os.read(fd, 4))[0] 
+            for i in range(many):
+                ipstr = os.read(fd, 4)
+                forbidden[inet_ntoa(ipstr)] = None 
+        except Exception, err: 
+            if log_level & LOG_WARN:
+                log_file.write(ujson.dumps(err.args)+"\n")
+            return
+        return 
+    if command & COMMAND_FLUSH_LOG: 
+        if log_buffer:
+            log_file.write(log_buffer.getvalue()) 
+            log_buffer.truncate(0)
+        log_file.flush()
+        return
 
 def handle_http_request(fd, events): 
     #close connection on error or hup 
@@ -582,28 +605,11 @@ def handle_http_request(fd, events):
         return 
     #maybe our data_fd
     if fd == data_fd:
-        if events & EPOLLIN: 
-            command = ord(_read(fd, 1))
-            #add forbidden ip 
-            if command & COMMAND_IP_FORBIDDEN:
-                try:
-                    many = unpack("I", _read(fd, 4))[0] 
-                    for i in range(many):
-                        ipstr = _read(fd, 4)
-                        forbidden[inet_ntoa(ipstr)] = None 
-                except Exception, err: 
-                    if log_level & LOG_WARN:
-                        log_file.write(ujson.dumps(err.args)+"\n")
-                    return
-                return 
-            if command & COMMAND_FLUSH_LOG: 
-                if log_buffer:
-                    log_file.write(log_buffer.getvalue()) 
-                    log_buffer.truncate(0)
-                log_file.flush()
-                return
-        else:            
-            return 
+        if events & EPOLLIN:        
+            handle_message(fd, events)
+        else:
+            return
+    
     con, addr = cons[fd] 
     #if we have accepted tits ip, close connection.
     if addr[0] in forbidden:
@@ -631,7 +637,7 @@ def handle_http_request(fd, events):
                 503, exc_info()))
         while True: 
             try:
-                data = _read(fd, 4096) 
+                data = os.read(fd, 4096) 
                 #tcp FIN
                 if not data: 
                     clean_queue(fd)
@@ -650,7 +656,7 @@ def handle_http_request(fd, events):
                     500, exc_info()))
             #maybe avavible 
             try:
-                _write(fd, outgoing_buf.getvalue())
+                os.write(fd, outgoing_buf.getvalue())
             except OSError as e:
                 if e.errno != EAGAIN:
                     raise e
@@ -683,13 +689,13 @@ def handle_http_request(fd, events):
             raise Exception((SERVER_LEVEL,
                 503, exc_info()))
         try:
-            header, cookie = header_decode(data[:header_end], False) 
+            header, cookie = parse_header(data[:header_end]) 
         except:
             raise Exception((HTTP_LEVEL,
-                400, None, "unable to find header"))
+                400, None, "unable to find header")) 
         if header.get("Connection") == "keep-alive": 
             close_reqest = False 
-        if header.get("METHOD") == "GET": 
+        if header.get("method") == "GET": 
             #build_request 
             request = {
                     "header": header,
@@ -705,7 +711,7 @@ def handle_http_request(fd, events):
             write_response(response, outgoing_buf)
             #write response to network.
             try:
-                _write(fd, outgoing_buf.getvalue())
+                os.write(fd, outgoing_buf.getvalue())
             except OSError as e:
                 if e.errno == EAGAIN:
                     raise e 
@@ -720,7 +726,7 @@ def handle_http_request(fd, events):
             else:
                 incoming_buf.truncate(0)
                 outgoing_buf.truncate(0) 
-        elif header.get("METHOD") == "POST": 
+        elif header.get("method") == "POST": 
             try:
                 content_length = int(header.get("Content-Length"))
             except:
@@ -770,7 +776,7 @@ def handle_http_request(fd, events):
                 response = {}
                 if post_type == 0:
                     if content_length: 
-                        request["stream"] = simple_post_decode(incoming_buf.getvalue())
+                        request["stream"] = parse_simple_post(incoming_buf.getvalue())
                     else:
                         request["stream"] = {}
                 elif post_type == 1: 
@@ -781,7 +787,7 @@ def handle_http_request(fd, events):
                     else:
                         boundary = ct[bend+9:]
                     if content_length:
-                        request["stream"] = complex_post_decode(incoming_buf.getvalue(), boundary) 
+                        request["stream"] = parse_complex_post(incoming_buf.getvalue(), boundary) 
                     else:
                         request["stream"] = {}
                 else:
@@ -791,7 +797,7 @@ def handle_http_request(fd, events):
                 write_response(response, outgoing_buf)
                 #write response to network
                 try:
-                    _write(fd, outgoing_buf.getvalue())
+                    os.write(fd, outgoing_buf.getvalue())
                 except OSError as e:
                     if e.errno == EAGAIN:
                         raise e
@@ -824,7 +830,7 @@ def handle_http_request(fd, events):
             request["client"] = addr
             request["fd"] = fd
             if post_type == 0: 
-                request["stream"] = simple_post_decode(incoming_buf.getvalue())
+                request["stream"] = parse_simple_post(incoming_buf.getvalue())
             elif post_type == 1: 
                 bend = ct.find("boundary")
                 if bend < 0:
@@ -832,14 +838,14 @@ def handle_http_request(fd, events):
                         None, "No boundary in multi-part post"))
                 else:
                     boundary = ct[bend+9:]
-                request["stream"] = complex_post_decode(incoming_buf.getvalue(), boundary) 
+                request["stream"] = parse_complex_post(incoming_buf.getvalue(), boundary) 
             else:
                 request["stream"] = {} 
             response = {}
             response = url_handler(request, response) 
             write_response(response, outgoing_buf)
             try:
-                _write(fd, outgoing_buf.getvalue())
+                os.write(fd, outgoing_buf.getvalue())
             except OSError as e:
                 if e.errno == EAGAIN:
                     raise e

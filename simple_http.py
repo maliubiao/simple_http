@@ -11,13 +11,13 @@ import pdb
 import signal
 import base64
 import json
+import time
 
 from string import letters 
 from uuid import uuid4
 from struct import pack, unpack
 from cStringIO import StringIO 
-from collections import OrderedDict
-
+from collections import OrderedDict 
 
 try:
     import ssl
@@ -268,8 +268,10 @@ def general_get(url, **kwargs):
     #remove scheme://host:port 
     if not http_proxy:
         del url_dict["host"] 
+    if "scheme" in url_dict:
         del url_dict["scheme"] 
     if "port" in url_dict:
+        port = int(url_dict["port"])
         del url_dict["port"] 
     if not kwargs.get("header"):
         header = default_header.copy() 
@@ -298,7 +300,7 @@ def general_get(url, **kwargs):
     #args for send_http
     final = "".join(request_list)       
     connection = (host, port) 
-    args = (connection, kwargs["proxy"], final, kwargs["timeout"])
+    args = (connection, use_ssl, final, kwargs["proxy"],  kwargs["timeout"])
     return send_http(*args)
 
 def handle_chunked(data, normal_stream):
@@ -327,7 +329,6 @@ def wait_response(connection, normal_stream, timeout=0):
     header_buffer = StringIO()
     content_buffer = StringIO()
     has_range = False 
-    noheader = 0 
 
     #if recv blocks, interrupt syscall after timeout
     if timeout:
@@ -340,25 +341,22 @@ def wait_response(connection, normal_stream, timeout=0):
         try:
             data = connection.recv(40960) 
         #interrupted syscall
-        except socket.error, err: 
-            normal_stream.write(content_buffer.getvalue())
-            content_buffer.close() 
-            return header, cookie 
-        #read header 
+        except socket.error as err: 
+            raise err 
+
+        if has_header and not data:
+            break 
+        
         if not has_header: 
-            if header_buffer:
-                header_buffer.write(data) 
-                data = header_buffer.getvalue()                
             header_end = data.find(HEADER_END) 
             if header_end < 0: 
-                noheader += 1 
-                if noheader > 2:
-                    content_buffer.close()
-                    raise socket.error("not a header")
-                else:
-                    header_buffer.write(data)
-                    continue
+                #slow network, wait for header 
+                header_buffer.write(data)
+                continue
             else:
+                header_buffer.write(data)
+                data = header_buffer.getvalue()
+                header_end = data.find(HEADER_END)
                 header_buffer.close() 
             header, cookie = parse_header(data[:header_end]) 
             if "Content-Length" in header:
@@ -367,17 +365,19 @@ def wait_response(connection, normal_stream, timeout=0):
                 length_unkown = True 
             #maybe chunked stream
             if header.get("Transfer-Encoding") == "chunked": 
-                chunked = True
-
+                chunked = True 
             if header.get("Accept-Ranges") == "bytes":
                 has_range = True
                 length_unkown = True
             if header.get("Content-Range"):
                 length_unkown = False 
+
             data = data[header_end+4:] 
             if not chunked and not has_range and length_unkown and not data:
-                break
+                #no idea how this stream ends, wait 0.1 seconds
+                time.sleep(0.1)
             has_header = True 
+
         content_buffer.write(data) 
         #handle chunked data
         if chunked:
@@ -396,17 +396,17 @@ def wait_response(connection, normal_stream, timeout=0):
             break; 
         #no more data
         if header.get("Connection") == "close" and length_unkown and not chunked:
-            break
+            break 
     normal_stream.write(content_buffer.getvalue())
     content_buffer.close()
     return header, cookie
 
 def connect_proxy(sock, connection, proxy): 
     proxy_type = None
-    proxy_dict = url_decode(proxy)
+    proxy_dict = urlparse(proxy)
     if proxy_dict["scheme"] == "socks5":
         proxy_type = "socks5"
-        proxy_server = (proxy_dict["host"], proxy_dict["port"]) 
+        proxy_server = (proxy_dict["host"], int(proxy_dict["port"])) 
         sock.connect(proxy_server) 
         #socks5 handshake
         sock.send("\x05\x01\x00") 
@@ -451,6 +451,7 @@ def send_http(connection, use_ssl, message, proxy=None, timeout=0):
         content_buffer.close()
         sock.close()
         raise err 
+
     sock.close() 
     #handle compressed stream: gzip, deflate 
     try: 
@@ -463,13 +464,13 @@ def send_http(connection, use_ssl, message, proxy=None, timeout=0):
                     -zlib.MAX_WBITS)  
         else:
             final = content_buffer.getvalue() 
-    except: 
-        pdb.set_trace()
+    except Exception as e: 
+        raise e
     content_buffer.close() 
     return header, cookie, final
 
 
-def unparse_post(payload): 
+def unparse_post(header, payload): 
     has_file = False 
     content_list = []
     #use multipart/form-data or not
@@ -521,27 +522,34 @@ def post(url, **kwargs):
     #generate path 
     use_ssl, port = scheme_from_dict(url_dict) 
     if not http_proxy:
+        host = url_dict["host"]
         del url_dict["host"]
+    if "scheme" in url_dict:
         del url_dict["scheme"]
     if "port" in url_dict: 
-       del url_dict["port"] 
+        port = int(url_dict["port"])
+        del url_dict["port"] 
     path = urlunparse(url_dict) 
 
-    if not header: header = default_header.copy() 
+    if "header" not in kwargs:
+        header = default_header.copy() 
+    else:
+        header = kwargs["header"]
+
     header["Host"] = "%s:%d" % (host, port) 
-    content = unparse_post(kwargs["payload"]) 
-    header["Content-Length"] = len(content)
+    content = unparse_post(header, kwargs["payload"]) 
+    header["Content-Length"] = str(len(content))
     header["path"]  = path
     header["method"] = METHOD_POST
     #mangle header for basic authorization
     if basicauth: header["Authorization"] = basicauth 
     #mangle header for basic proxy authorization
-    if http_proxy: header["Proxy-Authorization"] = http_proxy
+    if http_proxy: header["Proxy-Authorization"] = http_proxy 
     request_list.append(unparse_header(header)) 
     #generate cookie and HEADER_END
-    if cookie:
+    if "cookie" in kwargs:
         request_list.append("Cookie: ")    
-        request_list.append(unparse_simple_cookie(cookie)) 
+        request_list.append(unparse_simple_cookie(kwargs["cookie"])) 
         request_list.append(HEADER_END)
     else:
         request_list.append("\r\n")
@@ -549,8 +557,8 @@ def post(url, **kwargs):
     kwargs.setdefault("timeout", 0) 
     #args
     final = "".join(request_list)
-    connection = (host, port)
-    return send_post(connection, use_ssl, final, kwargs["proxy"], kwargs["timeout"]) 
+    connection = (host, port) 
+    return send_http(connection, use_ssl, final, kwargs["proxy"], kwargs["timeout"]) 
 
 
 def quote(url): 
@@ -599,7 +607,7 @@ def urlunparse(urldict):
     result = []
     _append = result.append
     if "scheme" in urldict: 
-        _append(urldict["scheme"] + "//") 
+        _append(urldict["scheme"] + "://") 
     if "user" in urldict:
         _append(urldict["user"]) 
         if "password" in urldict: 
@@ -613,10 +621,8 @@ def urlunparse(urldict):
         if not urldict["path"].startswith("/"):
             result.append("/") 
         _append(urldict["path"]) 
-        if not urldict["path"].endswith("/"): 
-            result.append("/") 
     if "query" in urldict: 
-        _append(urldict["query"]) 
+        _append("?" + urldict["query"]) 
     if "params" in urldict: 
         _append(";" + ";".join(urldict["params"])) 
     if "fragment" in urldict:  
@@ -753,8 +759,8 @@ def unparse_simple_cookie(simple_cookie_dict):
         ret.append("%s=%s; " % (k,v))
     return "".join(ret)[:-2]
 
-def parse_simple_cookie(simple_cookie):
-    cookie_dict = {}
+def parse_simple_cookie(simple_cookie): 
+    cookie_dict = {} 
     for cookie in simple_cookie.split(";"):
         kv = cookie.split("=")
         cookie_dict[kv[0].strip()] = kv[1].strip()
@@ -854,7 +860,7 @@ def parse_header(header_string):
     parts = header_string.split("\r\n")
     status = parts[0].split(" ") 
     status_dict = {}
-    if status[0].startswith("HTTP/1.1"): 
+    if status[0].startswith("HTTP/1"): 
         status_dict["protocol"] = status[0] 
         status_dict["status"] = int(status[1]) 
         status_dict["message"] = " ".join(status[2:])
@@ -892,6 +898,9 @@ def parse_header(header_string):
             else:
                 cookie = item[1] 
                 del header_dict[item[0]]
+
+    if not cookie:
+        return header_dict, None
 
     if server_side:
         cookie = parse_full_cookie(cookie) 

@@ -1,6 +1,7 @@
 import os
-
+import sys
 import signal
+import traceback
 import pdb
 import time
 import pprint 
@@ -12,37 +13,40 @@ import simple_http
 def getpage(url, nsecs=2):
     try:
         _, _, content = simple_http.get(url,
-                proxy="socks5://127.0.0.1:9988")
+                proxy="socks5://127.0.0.1:9901")
     except Exception as e:
         raise Exception("request failed: %s error %s", (url, e)) 
     print "=========\npage done: %s\ntimeout: %ds\n=========" % (url, nsecs)
     t = etree.HTML(content) 
     urls = [] 
-    host = simple_http.url_decode(url)["host"]
+    host = simple_http.urlparse(url)["host"] 
     #find all script, img
     for i in etree_utils.query_element(t, "[script,img]"): 
         attrib = i.attrib 
         if "href" in attrib: 
-            url_dict = simple_http.url_decode(attrib["href"])
+            url_dict = simple_http.urlparse(attrib["href"])
             if not url_dict["host"]:
                 url_dict["host"] = host 
-            urls.append(simple_http.url_encode(url_dict)) 
+            urls.append(simple_http.urlunparse(url_dict)) 
         if "src" in attrib: 
-            url_dict = simple_http.url_decode(attrib["src"])
+            url_dict = simple_http.urlparse(attrib["src"])
             if not url_dict["host"]:
                 url_dict["host"] = host 
-            urls.append(simple_http.url_encode(url_dict)) 
+            
+            urls.append(simple_http.urlunparse(url_dict)) 
     #multiprocess get
+    pdb.set_trace()
     pids = []
     for i in urls:
         pid = os.fork()
         if not pid: 
-            try:
-                simple_http.get(i, proxy="socks5://127.0.0.1:9988")
+            try: 
+                simple_http.get(i, proxy="socks5://127.0.0.1:9901")
                 print "url done: %s" % i
             except Exception as e:
                 print "url failed: %s" % i 
                 print "error %s" % e
+                traceback.print_tb(sys.exc_info()[2])
             exit(0)
         else:
             pids.append(pid) 
