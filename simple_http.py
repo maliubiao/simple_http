@@ -28,7 +28,7 @@ except:
 
 #url reversed characters 
 reversed_table = { 
-        #0x21: "%21", #!
+        0x21: "%21", #!
         "\x23": "%23", ##
         "\x24": "%24", #$
         "\x26": "%26", #&
@@ -216,16 +216,15 @@ def basic_auth_from_url(url_dict):
     return basicauth
 
 def proxy_from_url(proxy): 
+    http_proxy = "" 
     proxy_dict = urlparse(proxy) 
     if proxy_dict["scheme"] == "http":
         if proxy_dict.get("user"):
             http_proxy = "Basic %s" % base64.b64encode("%s:%s" % (proxy_dict["user"], proxy_dict["password"])) 
-    else:
-        http_proxy = "" 
     return http_proxy
 
 def join_query_dict(query):
-    return "?%s" % ("&".join(["=".join((quote_plus(k), quote_plus(v))) for k,v in query.items()]))
+    return "%s" % ("&".join(["=".join((quote_plus(k), quote_plus(v))) for k,v in query.items()]))
 
 
 def scheme_from_dict(url_dict): 
@@ -241,7 +240,6 @@ def scheme_from_dict(url_dict):
         port = 80 
     return use_ssl, port
 
-
 def get(url, **kwargs):
     return general_get(url, httpmethod="GET ", **kwargs)
 
@@ -253,7 +251,7 @@ def general_get(url, **kwargs):
     basicauth = None 
     if "user" in url_dict:
         basicauth = basic_auth_from_url(url_dict) 
-    #http proxy, mangle header
+    #http proxy, mangle header 
     http_proxy = None
     if kwargs.get("proxy"):
         http_proxy = proxy_from_url(kwargs["proxy"])
@@ -475,10 +473,15 @@ def unparse_post(header, payload):
     content_list = []
     #use multipart/form-data or not
     for k,v in payload.items(): 
-        if not (isinstance(v, str) or isinstance(v, file)): 
-            raise Exception("payload value: str or unicode or fileobject")
-        if isinstance(v, file):
+        if isinstance(v, unicode):
+            payload[k] = v.encode("utf-8")
+        elif isinstance(v, file):
             has_file = True 
+        elif isinstance(v, str):    
+            continue
+        else:
+            raise Exception("payload value: str or unicode or fileobject")
+
 
     #generate multipart stream
     if has_file: 
@@ -555,7 +558,7 @@ def post(url, **kwargs):
         request_list.append("\r\n")
     request_list.append(content) 
     kwargs.setdefault("timeout", 0) 
-    #args
+    #args 
     final = "".join(request_list)
     connection = (host, port) 
     return send_http(connection, use_ssl, final, kwargs["proxy"], kwargs["timeout"]) 
@@ -657,6 +660,8 @@ def urlparse(url):
         
         #handle delimiters
         if c == ":":                   
+            if status >= 5:
+                continue
             if url[i: i+3] == "://":
                 status = 1
                 result["scheme"] =  url[:i]
@@ -755,9 +760,15 @@ def cookie_full_to_simple(full_cookie):
 
 def unparse_simple_cookie(simple_cookie_dict):
     ret = []
+    has_unicode = False
     for k,v in simple_cookie_dict.items():
-        ret.append("%s=%s; " % (k,v))
-    return "".join(ret)[:-2]
+        if isinstance(k, unicode) or isinstance(v, unicode):
+            has_unicode = True
+        ret.append("%s=%s; " % (k,v)) 
+    if has_unicode:
+        return "".join(ret)[:-2].encode("utf-8")
+    else:
+        return "".join(ret)[:-2]
 
 def parse_simple_cookie(simple_cookie): 
     cookie_dict = {} 
