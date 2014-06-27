@@ -361,7 +361,7 @@ def wait_response(connection, normal_stream, timeout=0):
                 total_length = int(header["Content-Length"])
             else:
                 length_unkown = True 
-            #maybe chunked stream
+            #maybe chunked stream 
             if header.get("Transfer-Encoding") == "chunked": 
                 chunked = True 
             if header.get("Accept-Ranges") == "bytes":
@@ -452,6 +452,7 @@ def send_http(connection, use_ssl, message, proxy=None, timeout=0):
 
     sock.close() 
     #handle compressed stream: gzip, deflate 
+    
     try: 
         #maybe gzip stream
         if header.get("Content-Encoding") == "gzip": 

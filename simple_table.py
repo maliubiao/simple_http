@@ -1,5 +1,6 @@
 from random import randrange 
-from cStringIO import StringIO
+import marshal
+from string import maketrans
 
 def generate(): 
     SD = {}
@@ -22,24 +23,32 @@ def generate():
                     break 
     return SD, DS
 
-def translate(SD, data):
-    buf = StringIO()
-    for i in bytearray(data):
-        buf.write(chr(SD[i]))         
-    final = buf.getvalue()
-    buf.close()
-    return final
+def make_table(SD, DS): 
+    tSD = maketrans("".join([chr(x) for x in SD.keys()]), 
+        "".join([chr(x) for x in SD.values()]))
+    tDS = maketrans("".join([chr(x) for x in DS.keys()]), 
+        "".join([chr(x) for x in DS.values()]))
+    return tSD, tDS 
+
 
 def test(SD, DS):
     for i in range(0x0, 0xff+1):
         if i not in SD:
-            print "failed"
+            return -1
         if i not in DS:
-            print "failed"
+            return -1
     for k,v in SD.items():
         if k != DS[v]:
-            print "not equeal", k, v
-    print "OK"
+            return -1
+    return 0
 
 
+if __name__ == "__main__":
+    SD, DS = generate()
+    if test(SD, DS) < 0:
+        print "test failed"
+        exit()
+    f = open("tkey", "w+")
+    f.write(marshal.dumps(make_table(SD, DS)))
+    f.close()
 
