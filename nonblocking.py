@@ -302,14 +302,15 @@ def log_err(args):
 
 
 def handle_events(events_list): 
-    for fd, events in events_list: 
+    has_in_event = False
+    for fd, event in events_list: 
         if fd == sock_fd: 
             if events & (EPOLLERR | EPOLLHUP):
                 raise Exception("main socket error") 
             handle_new_connection(sock.accept())
             continue 
         try: 
-            handle_http_request(fd, events) 
+            handle_http_request(fd, event) 
         except Exception as err: 
             args = err.args
             if log_level & LOG_ERR: 
@@ -318,6 +319,9 @@ def handle_events(events_list):
                 if fd not in cons:    
                     continue
                 handle_server_error(fd, args)
+        if event & EPOLLIN:
+            has_in_event = True
+    return has_in_event
          
 def poll_wait(): 
     global sucess, failed 
@@ -334,7 +338,7 @@ def poll_wait():
         except IOError as e:
             continue 
         try:
-            handle_events(events_list)
+            has_in_event = handle_events(events_list)
             sucess += 1
         except Exception as e:
             log_err(e.args)

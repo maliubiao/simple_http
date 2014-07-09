@@ -208,23 +208,19 @@ _chrtohex = dict((chr(char), "%%%X" % char)
 
 def basic_auth_from_url(url_dict): 
     if "password" in url_dict: 
-        basicauth = "Basic %s" % base64.b64encode("%s:%s" % (url_dict["user"], url_dict["password"])) 
-        del url_dict["password"]
-    else:
-        basicauth = "Basic %s" % base64.b64encode(url_dict["user"])
-    del url_dict["user"]
-    return basicauth
+        return "Basic %s" % base64.b64encode("%s:%s" % (url_dict["user"], url_dict["password"])) 
+    return "Basic %s" % base64.b64encode(url_dict["user"]) 
 
 def proxy_from_url(proxy): 
-    http_proxy = "" 
+    http_proxy = None 
     proxy_dict = urlparse(proxy) 
     if proxy_dict["scheme"] == "http":
         if proxy_dict.get("user"):
             http_proxy = "Basic %s" % base64.b64encode("%s:%s" % (proxy_dict["user"], proxy_dict["password"])) 
     return http_proxy
 
-def join_query_dict(query):
-    return "%s" % ("&".join(["=".join((quote_plus(k), quote_plus(v))) for k,v in query.items()]))
+def join_query_dict(query): 
+    return "&".join(["=".join((quote_plus(k), quote_plus(v))) for k,v in query.items()])
 
 
 def scheme_from_dict(url_dict): 
@@ -251,12 +247,17 @@ def general_get(url, **kwargs):
     basicauth = None 
     if "user" in url_dict:
         basicauth = basic_auth_from_url(url_dict) 
+        del url_dict["user"]
+        try: 
+            del url_dict["password"]
+        except KeyError:
+            pass
     #http proxy, mangle header 
     http_proxy = None
     if kwargs.get("proxy"):
         http_proxy = proxy_from_url(kwargs["proxy"])
     else:
-        kwargs["proxy"] = ""
+        kwargs["proxy"] = None 
     #maybe ssl connection
     use_ssl, port = scheme_from_dict(url_dict) 
     #handle query string
@@ -338,7 +339,6 @@ def wait_response(connection, normal_stream, timeout=0):
     while True: 
         try:
             data = connection.recv(40960) 
-        #interrupted syscall
         except socket.error as err: 
             raise err 
 

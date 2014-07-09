@@ -215,7 +215,7 @@ def handle_request(context, text):
     addr_to = text[3]
     addr_type = ord(addr_to)
     if addr_type == 1:
-        addr = parse_buffer.read(4)
+        addr = socket.inet_ntoa(parse_buffer.read(4))
         addr_to += addr
     elif addr_type == 3: 
         addr_len = parse_buffer.read(1)
@@ -381,7 +381,7 @@ def poll_wait():
     ep_poll = epoll_object.poll
     while True: 
         if fast:
-            sleep_time = 0.00001
+            sleep_time = 0
             fast = False
         else:
             sleep_time = 0.1 
@@ -402,11 +402,11 @@ def poll_wait():
                 not context["out_buffer"].tell()) and (
                     not context["status"] & STATUS_WAIT_REMOTE):
                 continue 
+            fast = True
             if event & EPOLLOUT:
                 handle_pollout(context) 
             if event & EPOLLIN:
-                handle_pollin(context)
-                fast = True
+                handle_pollin(context) 
 
 if __name__ == "__main__": 
     server_config() 

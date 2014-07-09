@@ -177,11 +177,12 @@ def handle_handshake(context):
     if not raw: 
         clean_queue(context)
         return 
-    if not raw.startswith("\x05\x01"): 
+    #connect, or bind
+    if not (raw.startswith("\x05\x01") or raw.startswith("\x05\x02")): 
         clean_queue(context)
         return
     #handshake packet or not 
-    if len(raw) != 3: 
+    if len(raw) > 12:
         clean_queue(context)
         return
     #connect our server
@@ -278,7 +279,7 @@ def handle_new_request(context, text):
     addr_to = text[3]
     addr_type = ord(addr_to)
     if addr_type == 1:
-        addr = parse_buffer.read(4)
+        addr = socket.inet_ntoa(parse_buffer.read(4))
         addr_to += addr
     elif addr_type == 3: 
         addr_len = parse_buffer.read(1)
@@ -416,7 +417,7 @@ def handle_connection():
 
 def handle_socket(event): 
     if event & EPOLLIN:
-        handle_connection(event) 
+        handle_connection() 
     if event & EPOLLERR:
         raise Exception("fatal error") 
 
@@ -425,7 +426,7 @@ def poll_wait():
     ep_poll = epoll_object.poll
     while True: 
         if fast:
-            sleep_time = 0.00001
+            sleep_time = 0
             fast = False
         else:
             sleep_time = 0.1 
@@ -444,16 +445,15 @@ def poll_wait():
                 continue 
             if (not (event & EPOLLIN)) and (
                 not context["out_buffer"].tell()) and (
-                    not context["status"] & STATUS_SERVER_CONNECTED):
+                    not context["status"] & STATUS_SERVER_CONNECTED): 
                 continue 
+            fast = True
             if event & EPOLLOUT:
                 handle_pollout(context) 
-
             if event & EPOLLIN:
-                handle_pollin(context)
-                fast = True
+                handle_pollin(context) 
 
 if __name__ == "__main__":
     server_config() 
-    daemonize()
+    #daemonize()
     poll_wait()
