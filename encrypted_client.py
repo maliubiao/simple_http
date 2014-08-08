@@ -9,42 +9,28 @@ import struct
 import pwd 
 import marshal 
 
-from select import *
-from fcntl import *
+
 from struct import unpack
 from struct import pack
 from cStringIO import StringIO 
 from time import sleep 
 from time import time
+from select import *
+from fcntl import *
 
 
 #server ip, port 
 SERVER_IP = "127.0.0.1"
-SERVER_PORT = 9988
+SERVER_PORT = 9977
 
 MAX_LISTEN = 1024
 REMOTE = ("127.0.0.1", 9905)
 
-EAGAIN = errno.EAGAIN
-
-sock = None
-sockfd = None
-epoll_object = None
 cons = {} 
 
-def read_key(keyfile): 
-    f = open(keyfile, "r")
-    result = marshal.loads(f.read())
-    f.close()
-    return result
+g = globals() 
 
-SD, DS = read_key("key")
-
-SOCKS_HANDSHAKE_CLIENT = "\x05\x01\x00".translate(SD)
-SOCKS_HANDSHAKE_SERVER = "\x05\x00".translate(SD)
-SOCKS_REQUEST_OK_RAW = "\x05\x00\x00\x01%s%s" % (socket.inet_aton("0.0.0.0"), pack(">H", 8888))
-SOCKS_REQUEST_OK = SOCKS_REQUEST_OK_RAW.translate(SD)
-
+EAGAIN = errno.EAGAIN 
 
 STATUS_HANDSHAKE = 0x1 << 1 
 STATUS_REQUEST = 0x1 << 2
@@ -94,15 +80,28 @@ def daemonize():
         exit()        
 
 
-def server_config():
-    global sock, sockfd, epoll_object
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
+def read_key(keyfile): 
+    f = open(keyfile, "r")
+    result = marshal.loads(f.read())
+    f.close()
+    return result
+
+
+def set_globals(): 
+    g["sock"] = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((SERVER_IP, SERVER_PORT)) 
     sock.listen(MAX_LISTEN) 
-    sockfd = sock.fileno() 
-    epoll_object = epoll()
+    g["sockfd"] = sock.fileno() 
+    g["epoll_object"] = epoll()
     epoll_object.register(sockfd, EPOLLIN | EPOLLERR)
+    g["SD"], g["DS"] = read_key("key") 
+    g.update({
+        "SOCKS_HANDSHAKE_CLIENT": "\x05\x01\x00".translate(SD),
+        "SOCKS_HANDSHAKE_SERVER": "\x05\x00".translate(SD),
+        "SOCKS_REQUEST_OK_RAW": "\x05\x00\x00\x01%s%s" % (socket.inet_aton("0.0.0.0"), pack(">H", 8888)), 
+        }) 
+    g["SOCKS_REQUEST_OK"] = SOCKS_REQUEST_OK_RAW.translate(SD)
 
 
 def clean_profile(context): 
@@ -159,10 +158,8 @@ def handle_write_later(context):
                 clean_queue(context)
             return 
         if data_sent != data_count: 
-            out_buffer.truncate(0)
             out_buffer.write(data[data_sent:])
-        else:
-            out_buffer.truncate(0) 
+        out_buffer.truncate(0)
 
 
 def handle_handshake(context): 
@@ -454,6 +451,6 @@ def poll_wait():
                 handle_pollin(context) 
 
 if __name__ == "__main__":
-    server_config() 
+    set_globals() 
     #daemonize()
     poll_wait()

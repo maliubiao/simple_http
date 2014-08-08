@@ -27,31 +27,13 @@ MAX_LISTEN = 1024
 EAGAIN = errno.EAGAIN 
 
 
-
-def read_key(keyfile): 
-    f = open(keyfile, "r")
-    result = marshal.loads(f.read())
-    f.close()
-    return result
-
-SD, DS = read_key("key")
-
-
-
-SOCKS_HANDSHAKE_CLIENT = "\x05\x01\x00".translate(SD)
-SOCKS_HANDSHAKE_SERVER = "\x05\x00".translate(SD)
-SOCKS_REQUEST_OK = ("\x05\x00\x00\x01%s%s" % (socket.inet_aton("0.0.0.0"), pack(">H", 8888))).translate(SD)
-
 STATUS_HANDSHAKE = 0x1 << 1 
 STATUS_REQUEST = 0x1 << 2
 STATUS_WAIT_REMOTE = 0x1 << 3
 STATUS_DATA = 0x1 << 4
 
-sock = None
-sockfd = None
-epoll_object = None
 cons = {} 
-
+g = globals()
 
 def run_as_user(user):
     try:
@@ -91,15 +73,29 @@ def daemonize():
         exit()        
 
 
-def server_config():
-    global sock, sockfd, epoll_object
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
+
+def read_key(keyfile): 
+    f = open(keyfile, "r")
+    result = marshal.loads(f.read())
+    f.close()
+    return result
+
+
+
+
+def set_globals(): 
+    g["sock"] = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((SERVER_IP, SERVER_PORT)) 
     sock.listen(MAX_LISTEN) 
-    sockfd = sock.fileno() 
-    epoll_object = epoll()
-    epoll_object.register(sockfd, EPOLLIN | EPOLLERR)
+    g["sockfd"] = sock.fileno() 
+    g["epoll_object"] = epoll()
+    epoll_object.register(sockfd, EPOLLIN | EPOLLERR) 
+    g["SD"], g["DS"] = read_key("key") 
+    g["SOCKS_HANDSHAKE_CLIENT"] = "\x05\x01\x00".translate(SD)
+    g["SOCKS_HANDSHAKE_SERVER"] = "\x05\x00".translate(SD)
+    g["SOCKS_REQUEST_OK"] = ("\x05\x00\x00\x01%s%s" % (socket.inet_aton("0.0.0.0"), pack(">H", 8888))).translate(SD)
+
 
 def clean_profile(context): 
     #close client buffer
@@ -155,10 +151,8 @@ def handle_write_later(context):
                 clean_queue(context) 
             return 
         if data_sent != data_count: 
-            out_buffer.truncate(0)
-            out_buffer.write(data[data_sent:])
-        else:
-            out_buffer.truncate(0) 
+            out_buffer.write(data[data_sent:]) 
+        out_buffer.truncate(0) 
 
 
 def handle_handshake(context): 
@@ -409,7 +403,7 @@ def poll_wait():
                 handle_pollin(context) 
 
 if __name__ == "__main__": 
-    server_config() 
-    run_as_user("quark") 
-    daemonize()
+    set_globals() 
+    #run_as_user("quark") 
+    #daemonize()
     poll_wait()
