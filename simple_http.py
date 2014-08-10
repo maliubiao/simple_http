@@ -239,6 +239,19 @@ def scheme_from_dict(url_dict):
 def get(url, **kwargs):
     return general_get(url, httpmethod="GET ", **kwargs)
 
+def head(url, **kwargs):
+    return general_get(url, httpmethod="HEAD ", header_only=True, **kwargs)
+
+def delete(url, **kwargs):
+    return general_get(url, httpmethod="DELETE ", **kwargs) 
+
+def trace(url, **kwargs):
+    return general_get(url, httpmethod="TRACE ", **kwargs)
+
+def options(url, **kwargs):
+    return general_get(url, httpmethod="OPTIONS ", **kwargs)
+
+
 
 def general_get(url, **kwargs): 
     request_list = [] 
@@ -279,8 +292,7 @@ def general_get(url, **kwargs):
     header["Host"] = "%s:%d" % (host, port) 
     #reuqest path
     path = urlunparse(url_dict) 
-    if kwargs.get("httpmethod"):
-        header["method"] = kwargs["httpmethod"] 
+    header["method"] = kwargs.get("httpmethod", METHOD_GET) 
     header["path"] = path 
     #for basic authorization 
     if basicauth: header["Authorization"] = basicauth 
@@ -299,7 +311,7 @@ def general_get(url, **kwargs):
     #args for send_http
     final = "".join(request_list)       
     connection = (host, port) 
-    args = (connection, use_ssl, final, kwargs["proxy"],  kwargs["timeout"])
+    args = (connection, use_ssl, final, kwargs["proxy"],  kwargs["timeout"], kwargs.get("header_only", False))
     return send_http(*args)
 
 def handle_chunked(data, normal_stream):
@@ -318,7 +330,8 @@ def handle_chunked(data, normal_stream):
         normal_stream.write(data[next_chunk: next_chunk+this_chunk])
         prev_chunk = next_chunk + this_chunk + 2
 
-def wait_response(connection, normal_stream, timeout=0):
+
+def wait_response(connection, normal_stream, timeout=0, header_only=False):
     total_length = 0xffffffff 
     chunked = False 
     length_unkown = False 
@@ -340,7 +353,8 @@ def wait_response(connection, normal_stream, timeout=0):
         try:
             data = connection.recv(40960) 
         except socket.error as err: 
-            raise err 
+            if err.errno == errno.EINTR: 
+                return header, cookie                     
 
         if has_header and not data:
             break 
@@ -349,6 +363,7 @@ def wait_response(connection, normal_stream, timeout=0):
             header_end = data.find(HEADER_END) 
             if header_end < 0: 
                 #slow network, wait for header 
+                time.sleep(0.1)
                 header_buffer.write(data)
                 continue
             else:
@@ -371,10 +386,14 @@ def wait_response(connection, normal_stream, timeout=0):
                 length_unkown = False 
 
             data = data[header_end+4:] 
-            if not chunked and not has_range and length_unkown and not data:
-                #no idea how this stream ends, wait 0.1 seconds
-                time.sleep(0.1)
             has_header = True 
+            
+            if header_only:
+                break
+            if not chunked and not has_range and length_unkown and not data and header["status"] == 200:
+                #no idea how this stream ends, break
+                time.sleep(0.1)
+                continue 
 
         content_buffer.write(data) 
         #handle chunked data
@@ -392,8 +411,8 @@ def wait_response(connection, normal_stream, timeout=0):
         #Content-Length
         if content_buffer.tell() >= total_length:
             break; 
-        #no more data
-        if header.get("Connection") == "close" and length_unkown and not chunked:
+        #no more data 
+        if (header.get("Connection") == "close"  or header["status"] >= 300 or header["status"] < 200) and length_unkown and not chunked:
             break 
     normal_stream.write(content_buffer.getvalue())
     content_buffer.close()
@@ -429,7 +448,7 @@ def connect_proxy(sock, connection, proxy):
     return proxy_type
 
 
-def send_http(connection, use_ssl, message, proxy=None, timeout=0): 
+def send_http(connection, use_ssl, message, proxy=None, timeout=0, header_only=False): 
     try: 
         content_buffer = StringIO() 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
@@ -444,27 +463,23 @@ def send_http(connection, use_ssl, message, proxy=None, timeout=0):
         sock.send(message) 
         header, cookie = wait_response(sock,
                 content_buffer,
-                timeout=timeout)
+                timeout=timeout,
+                header_only=header_only)
     except socket.error, err: 
         content_buffer.close()
         sock.close()
         raise err 
 
     sock.close() 
+    final = content_buffer.getvalue()
     #handle compressed stream: gzip, deflate 
-    
-    try: 
+    if not header_only: 
         #maybe gzip stream
         if header.get("Content-Encoding") == "gzip": 
-            final = zlib.decompress(content_buffer.getvalue(),
-                    16+zlib.MAX_WBITS)  
+            final = zlib.decompress(final, 16+zlib.MAX_WBITS)  
         elif header.get("Content-Encoding") == "deflate":
-            final = zlib.decompress(content_buffer.getvalue(),
-                    -zlib.MAX_WBITS)  
-        else:
-            final = content_buffer.getvalue() 
-    except Exception as e: 
-        raise e
+            final = zlib.decompress(final, -zlib.MAX_WBITS)  
+    
     content_buffer.close() 
     return header, cookie, final
 
@@ -481,8 +496,7 @@ def unparse_post(header, payload):
         elif isinstance(v, str):    
             continue
         else:
-            raise Exception("payload value: str or unicode or fileobject")
-
+            raise Exception("payload value: str or unicode or fileobject") 
 
     #generate multipart stream
     if has_file: 
@@ -508,7 +522,14 @@ def unparse_post(header, payload):
 
     return "".join(content_list)
 
-def post(url, **kwargs): 
+def put(url, **kwargs):
+    return general_post(url, httpmethod="PUT ", **kwargs)
+
+def post(url, **kwargs):
+    return general_post(url, httpmethod="POST ", **kwargs)
+
+
+def general_post(url, **kwargs): 
     request_list = []
     use_ssl = False 
     url_dict = urlparse(url) 
@@ -544,7 +565,7 @@ def post(url, **kwargs):
     content = unparse_post(header, kwargs["payload"]) 
     header["Content-Length"] = str(len(content))
     header["path"]  = path
-    header["method"] = METHOD_POST
+    header["method"] = kwargs.get("httpmethod", METHOD_POST) 
     #mangle header for basic authorization
     if basicauth: header["Authorization"] = basicauth 
     #mangle header for basic proxy authorization
@@ -562,7 +583,7 @@ def post(url, **kwargs):
     #args 
     final = "".join(request_list)
     connection = (host, port) 
-    return send_http(connection, use_ssl, final, kwargs["proxy"], kwargs["timeout"]) 
+    return send_http(connection,  use_ssl,  final, kwargs.get("proxy", ""), kwargs.get("timeout", 0), kwargs.get("header_only", False)) 
 
 
 def quote(url): 
