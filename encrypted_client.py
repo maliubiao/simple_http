@@ -27,23 +27,8 @@ REMOTE = ("127.0.0.1", 9905)
 
 EAGAIN = errno.EAGAIN
 
-sock = None
-sockfd = None
-epoll_object = None
 cons = {} 
-
-def read_key(keyfile): 
-    f = open(keyfile, "r")
-    result = marshal.loads(f.read())
-    f.close()
-    return result
-
-SD, DS = read_key("key")
-
-SOCKS_HANDSHAKE_CLIENT = "\x05\x01\x00".translate(SD)
-SOCKS_HANDSHAKE_SERVER = "\x05\x00".translate(SD)
-SOCKS_REQUEST_OK_RAW = "\x05\x00\x00\x01%s%s" % (socket.inet_aton("0.0.0.0"), pack(">H", 8888))
-SOCKS_REQUEST_OK = SOCKS_REQUEST_OK_RAW.translate(SD)
+g = globals()
 
 
 STATUS_HANDSHAKE = 0x1 << 1 
@@ -55,6 +40,7 @@ STATUS_SERVER_HANDSHKAE = 0x1 << 5
 STATUS_SERVER_REQUEST = 0x1 << 6 
 STATUS_SERVER_CONNECTED = 0x1 <<7
 STATUS_SERVER_WAIT_REMOTE = 0x1 << 8
+
 
 def run_as_user(user):
     try:
@@ -70,8 +56,10 @@ def run_as_user(user):
     except OSError:
         raise Exception("change uid failed") 
 
+
+
 def daemonize():
-    log_file = open("/tmp/encrypted_client.log", "w+")
+    log_file = open("/tmp/encrypted_client.log", "w+", buffering=False)
     try:
         status = os.fork()
     except OSError as e:
@@ -94,15 +82,29 @@ def daemonize():
         exit()        
 
 
-def server_config():
-    global sock, sockfd, epoll_object
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
+
+def read_key(keyfile): 
+    f = open(keyfile, "r")
+    result = marshal.loads(f.read())
+    f.close()
+    return result
+
+
+def set_globals(): 
+    g["sock"] = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((SERVER_IP, SERVER_PORT)) 
     sock.listen(MAX_LISTEN) 
-    sockfd = sock.fileno() 
-    epoll_object = epoll()
+    g["sockfd"] = sock.fileno() 
+    g["epoll_object"] = epoll()
     epoll_object.register(sockfd, EPOLLIN | EPOLLERR)
+    g["SD"], g["DS"] = read_key("key") 
+    g["SOCKS_HANDSHAKE_CLIENT"] = "\x05\x01\x00".translate(SD)
+    g["SOCKS_HANDSHAKE_SERVER"] = "\x05\x00".translate(SD)
+    g["SOCKS_REQUEST_OK_RAW"] = "\x05\x00\x00\x01%s%s" % (socket.inet_aton("0.0.0.0"), pack(">H", 8888))
+    g["SOCKS_REQUEST_OK"] = SOCKS_REQUEST_OK_RAW.translate(SD)
+
+
 
 
 def clean_profile(context): 
@@ -300,7 +302,7 @@ def handle_new_request(context, text):
         return
 
     remote = (addr, port[0]) 
-    print "new request\n", remote
+    print "new request %s: %d" % remote
     context["request"] = remote
     to_context["request"] = remote 
     
@@ -421,6 +423,7 @@ def handle_socket(event):
     if event & EPOLLERR:
         raise Exception("fatal error") 
 
+
 def poll_wait(): 
     fast = True
     ep_poll = epoll_object.poll
@@ -454,6 +457,6 @@ def poll_wait():
                 handle_pollin(context) 
 
 if __name__ == "__main__":
-    server_config() 
+    set_globals() 
     #daemonize()
     poll_wait()

@@ -48,7 +48,7 @@ if __name__ == "__main__":
     if test(SD, DS) < 0:
         print "test failed"
         exit()
-    f = open("tkey", "w+")
+    f = open("key", "w+")
     f.write(marshal.dumps(make_table(SD, DS)))
     f.close()
 

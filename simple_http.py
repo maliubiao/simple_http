@@ -183,6 +183,10 @@ HEADER_END = "\x0d\x0a\x0d\x0a"
 METHOD_GET = "GET "
 METHOD_POST = "POST "
 METHOD_DELETE = "DELETE "
+METHOD_PUT = "PUT "
+METHOD_OPTIONS = "OPTIONS "
+METHOD_TRACE = "TRACE "
+METHOD_HEAD = "HEAD "
 
 
 BOUNDARY = uuid4().hex
@@ -237,20 +241,19 @@ def scheme_from_dict(url_dict):
     return use_ssl, port
 
 def get(url, **kwargs):
-    return general_get(url, httpmethod="GET ", **kwargs)
+    return general_get(url, httpmethod=METHOD_GET, **kwargs)
 
 def head(url, **kwargs):
-    return general_get(url, httpmethod="HEAD ", header_only=True, **kwargs)
+    return general_get(url, httpmethod=METHOD_HEAD, header_only=True, **kwargs)
 
 def delete(url, **kwargs):
-    return general_get(url, httpmethod="DELETE ", **kwargs) 
+    return general_get(url, httpmethod=METHOD_DELETE, **kwargs) 
 
 def trace(url, **kwargs):
-    return general_get(url, httpmethod="TRACE ", **kwargs)
+    return general_get(url, httpmethod=METHOD_TRACE, **kwargs)
 
 def options(url, **kwargs):
-    return general_get(url, httpmethod="OPTIONS ", **kwargs)
-
+    return general_get(url, httpmethod=METHOD_OPTIONS, **kwargs)
 
 
 def general_get(url, **kwargs): 
@@ -261,10 +264,9 @@ def general_get(url, **kwargs):
     if "user" in url_dict:
         basicauth = basic_auth_from_url(url_dict) 
         del url_dict["user"]
-        try: 
-            del url_dict["password"]
-        except KeyError:
-            pass
+    if "password" in url_dict:        
+        del url_dict["password"] 
+
     #http proxy, mangle header 
     http_proxy = None
     if kwargs.get("proxy"):
@@ -311,7 +313,7 @@ def general_get(url, **kwargs):
     #args for send_http
     final = "".join(request_list)       
     connection = (host, port) 
-    args = (connection, use_ssl, final, kwargs["proxy"],  kwargs["timeout"], kwargs.get("header_only", False))
+    args = (connection, use_ssl, final, kwargs.get("proxy", ""),  kwargs.get("timeout", 0), kwargs.get("header_only", False))
     return send_http(*args)
 
 def handle_chunked(data, normal_stream):
@@ -355,7 +357,7 @@ def wait_response(connection, normal_stream, timeout=0, header_only=False):
         except socket.error as err: 
             if err.errno == errno.EINTR: 
                 return header, cookie                     
-
+            raise
         if has_header and not data:
             break 
         
@@ -523,10 +525,10 @@ def unparse_post(header, payload):
     return "".join(content_list)
 
 def put(url, **kwargs):
-    return general_post(url, httpmethod="PUT ", **kwargs)
+    return general_post(url, httpmethod=METHOD_PUT, **kwargs)
 
 def post(url, **kwargs):
-    return general_post(url, httpmethod="POST ", **kwargs)
+    return general_post(url, httpmethod=METHOD_POST, **kwargs)
 
 
 def general_post(url, **kwargs): 
@@ -537,6 +539,10 @@ def general_post(url, **kwargs):
     basicauth = None
     if "user" in url_dict:
         basicauth = basic_auth_from_url(url_dict) 
+        del url_dict["user"]
+    if "password" in url_dict:
+        del url_dict["password"]
+
     #http proxy, mangle header
     http_proxy = None
     if kwargs.get("proxy"):
