@@ -27,10 +27,10 @@ MAX_LISTEN = 1024
 REMOTE = ("127.0.0.1", 9905)
 
 cons = {} 
-
 g = globals() 
 
-EAGAIN = errno.EAGAIN 
+EAGAIN = errno.EAGAIN
+
 
 STATUS_HANDSHAKE = 0x1 << 1 
 STATUS_REQUEST = 0x1 << 2
@@ -41,6 +41,7 @@ STATUS_SERVER_HANDSHKAE = 0x1 << 5
 STATUS_SERVER_REQUEST = 0x1 << 6 
 STATUS_SERVER_CONNECTED = 0x1 <<7
 STATUS_SERVER_WAIT_REMOTE = 0x1 << 8
+
 
 def run_as_user(user):
     try:
@@ -56,8 +57,10 @@ def run_as_user(user):
     except OSError:
         raise Exception("change uid failed") 
 
+
+
 def daemonize():
-    log_file = open("/tmp/encrypted_client.log", "w+")
+    log_file = open("/tmp/encrypted_client.log", "w+", buffering=False)
     try:
         status = os.fork()
     except OSError as e:
@@ -96,12 +99,10 @@ def set_globals():
     g["epoll_object"] = epoll()
     epoll_object.register(sockfd, EPOLLIN | EPOLLERR)
     g["SD"], g["DS"] = read_key("key") 
-    g.update({
-        "SOCKS_HANDSHAKE_CLIENT": "\x05\x01\x00".translate(SD),
-        "SOCKS_HANDSHAKE_SERVER": "\x05\x00".translate(SD),
-        "SOCKS_REQUEST_OK_RAW": "\x05\x00\x00\x01%s%s" % (socket.inet_aton("0.0.0.0"), pack(">H", 8888)), 
-        }) 
-    g["SOCKS_REQUEST_OK"] = SOCKS_REQUEST_OK_RAW.translate(SD)
+    g["SOCKS_HANDSHAKE_CLIENT"] = "\x05\x01\x00".translate(SD)
+    g["SOCKS_HANDSHAKE_SERVER"] = "\x05\x00".translate(SD)
+    g["SOCKS_REQUEST_OK_RAW"] = "\x05\x00\x00\x01%s%s" % (socket.inet_aton("0.0.0.0"), pack(">H", 8888))
+    g["SOCKS_REQUEST_OK"] = SOCKS_REQUEST_OK_RAW.translate(SD) 
 
 
 def clean_profile(context): 
@@ -297,7 +298,7 @@ def handle_new_request(context, text):
         return
 
     remote = (addr, port[0]) 
-    print "new request\n", remote
+    print "new request %s: %d" % remote
     context["request"] = remote
     to_context["request"] = remote 
     
@@ -417,6 +418,7 @@ def handle_socket(event):
         handle_connection() 
     if event & EPOLLERR:
         raise Exception("fatal error") 
+
 
 def poll_wait(): 
     fast = True

@@ -18,12 +18,15 @@ from time import sleep
 from time import time
 
 
-
 #server ip, port 
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 9905
 
 MAX_LISTEN = 1024 
+
+
+cons = {} 
+g = globals() 
 EAGAIN = errno.EAGAIN 
 
 
@@ -32,8 +35,6 @@ STATUS_REQUEST = 0x1 << 2
 STATUS_WAIT_REMOTE = 0x1 << 3
 STATUS_DATA = 0x1 << 4
 
-cons = {} 
-g = globals()
 
 def run_as_user(user):
     try:
@@ -50,7 +51,7 @@ def run_as_user(user):
         raise Exception("change uid failed") 
 
 def daemonize():
-    log_file = open("/tmp/encrypted_server.log", "w+")
+    log_file = open("/tmp/encrypted_server.log", "w+", buffering=False)
     try:
         status = os.fork()
     except OSError as e:
@@ -81,15 +82,13 @@ def read_key(keyfile):
     return result
 
 
-
-
 def set_globals(): 
     g["sock"] = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((SERVER_IP, SERVER_PORT)) 
     sock.listen(MAX_LISTEN) 
     g["sockfd"] = sock.fileno() 
-    g["epoll_object"] = epoll()
+    g["epoll_object"] = epoll() 
     epoll_object.register(sockfd, EPOLLIN | EPOLLERR) 
     g["SD"], g["DS"] = read_key("key") 
     g["SOCKS_HANDSHAKE_CLIENT"] = "\x05\x01\x00".translate(SD)
@@ -175,6 +174,7 @@ def handle_handshake(context):
     context["status"] = STATUS_REQUEST 
     return 
 
+
 def which_status(context): 
     from_conn = context["from_conn"] 
     #we don't read more until we can send them out 
@@ -200,6 +200,7 @@ def which_status(context):
     else:            
         return STATUS_REQUEST, raw
     
+
 
 def handle_request(context, text): 
     from_conn = context["from_conn"]
@@ -268,6 +269,7 @@ def handle_request(context, text):
             clean_queue(context) 
         
 
+
 def handle_remote_connected(context): 
     to_conn = context["to_conn"]
     to_context = cons[to_conn.fileno()]
@@ -278,6 +280,7 @@ def handle_remote_connected(context):
         return 
     context["status"] = STATUS_DATA
     to_context["status"] = STATUS_DATA 
+
 
 
 def read_to_buffer(con, buf):
@@ -291,6 +294,7 @@ def read_to_buffer(con, buf):
             if e.errno == EAGAIN:
                 break
             raise e
+
 
 def handle_redirect_data(context, text): 
     from_conn = context["from_conn"] 
@@ -330,6 +334,7 @@ def handle_pollout(context):
     if status & STATUS_WAIT_REMOTE: 
         handle_remote_connected(context) 
         return
+
 
 def handle_pollin(context):
     status = context["status"] 
