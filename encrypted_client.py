@@ -9,13 +9,14 @@ import struct
 import pwd 
 import marshal 
 
-from select import *
-from fcntl import *
+
 from struct import unpack
 from struct import pack
 from cStringIO import StringIO 
 from time import sleep 
 from time import time
+from select import *
+from fcntl import *
 
 
 #server ip, port 
@@ -25,10 +26,10 @@ SERVER_PORT = 9988
 MAX_LISTEN = 1024
 REMOTE = ("127.0.0.1", 9905)
 
-EAGAIN = errno.EAGAIN
-
 cons = {} 
-g = globals()
+g = globals() 
+
+EAGAIN = errno.EAGAIN
 
 
 STATUS_HANDSHAKE = 0x1 << 1 
@@ -82,7 +83,6 @@ def daemonize():
         exit()        
 
 
-
 def read_key(keyfile): 
     f = open(keyfile, "r")
     result = marshal.loads(f.read())
@@ -102,9 +102,7 @@ def set_globals():
     g["SOCKS_HANDSHAKE_CLIENT"] = "\x05\x01\x00".translate(SD)
     g["SOCKS_HANDSHAKE_SERVER"] = "\x05\x00".translate(SD)
     g["SOCKS_REQUEST_OK_RAW"] = "\x05\x00\x00\x01%s%s" % (socket.inet_aton("0.0.0.0"), pack(">H", 8888))
-    g["SOCKS_REQUEST_OK"] = SOCKS_REQUEST_OK_RAW.translate(SD)
-
-
+    g["SOCKS_REQUEST_OK"] = SOCKS_REQUEST_OK_RAW.translate(SD) 
 
 
 def clean_profile(context): 
@@ -161,10 +159,8 @@ def handle_write_later(context):
                 clean_queue(context)
             return 
         if data_sent != data_count: 
-            out_buffer.truncate(0)
             out_buffer.write(data[data_sent:])
-        else:
-            out_buffer.truncate(0) 
+        out_buffer.truncate(0)
 
 
 def handle_handshake(context): 

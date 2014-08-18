@@ -23,15 +23,17 @@ SERVER_IP = "127.0.0.1"
 SERVER_PORT = 9905
 
 MAX_LISTEN = 1024 
+
+
+cons = {} 
+g = globals() 
 EAGAIN = errno.EAGAIN 
+
 
 STATUS_HANDSHAKE = 0x1 << 1 
 STATUS_REQUEST = 0x1 << 2
 STATUS_WAIT_REMOTE = 0x1 << 3
 STATUS_DATA = 0x1 << 4
-
-cons = {} 
-g = globals()
 
 
 def run_as_user(user):
@@ -86,8 +88,8 @@ def set_globals():
     sock.bind((SERVER_IP, SERVER_PORT)) 
     sock.listen(MAX_LISTEN) 
     g["sockfd"] = sock.fileno() 
-    g["epoll_object"] = epoll()
-    epoll_object.register(sockfd, EPOLLIN | EPOLLERR)
+    g["epoll_object"] = epoll() 
+    epoll_object.register(sockfd, EPOLLIN | EPOLLERR) 
     g["SD"], g["DS"] = read_key("key") 
     g["SOCKS_HANDSHAKE_CLIENT"] = "\x05\x01\x00".translate(SD)
     g["SOCKS_HANDSHAKE_SERVER"] = "\x05\x00".translate(SD)
@@ -148,10 +150,8 @@ def handle_write_later(context):
                 clean_queue(context) 
             return 
         if data_sent != data_count: 
-            out_buffer.truncate(0)
-            out_buffer.write(data[data_sent:])
-        else:
-            out_buffer.truncate(0) 
+            out_buffer.write(data[data_sent:]) 
+        out_buffer.truncate(0) 
 
 
 def handle_handshake(context): 
