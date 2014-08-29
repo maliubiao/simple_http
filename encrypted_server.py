@@ -149,30 +149,9 @@ def handle_write_later(context):
             if e.errno != EAGAIN: 
                 clean_queue(context) 
             return 
+        out_buffer.truncate(0) 
         if data_sent != data_count: 
             out_buffer.write(data[data_sent:]) 
-        out_buffer.truncate(0) 
-
-
-def handle_handshake(context): 
-    from_conn = context["from_conn"]
-    out_buffer = context["out_buffer"]
-    raw = from_conn.recv(128) 
-    #maybe RST
-    if not raw: 
-        clean_queue(context)
-        return 
-    if raw != SOCKS_HANDSHAKE_CLIENT: 
-        clean_queue(context)
-        return
-    #handshake packet or not 
-    try: 
-        from_conn.send(SOCKS_HANDSHAKE_SERVER)
-    except socket.error:
-        out_buffer.write(SOCKS_HANDSHAKE_SERVER) 
-        return
-    context["status"] = STATUS_REQUEST 
-    return 
 
 
 def which_status(context): 
@@ -194,13 +173,13 @@ def which_status(context):
     raw = text 
     if context["crypted"]:
         raw = text.translate(DS) 
-
-    if not raw.startswith("\x05\x01\x00"):
-        return STATUS_DATA, text
-    else:            
-        return STATUS_REQUEST, raw
+    if raw.startswith("\x05\x01\x00"):
+        return STATUS_REQUEST, raw 
+    if not to_conn:
+        clean_queue(context)
+        return
+    return STATUS_DATA, text 
     
-
 
 def handle_request(context, text): 
     from_conn = context["from_conn"]
@@ -259,8 +238,7 @@ def handle_request(context, text):
         context["to_conn"].close()                   
         context["out_buffer"].close()
         context["in_buffer"].close()
-    context["to_conn"] = request_sock
-    context["status"] = 0
+    context["to_conn"] = request_sock 
     context["request"] = remote
     try: 
         request_sock.connect(remote)
@@ -268,7 +246,6 @@ def handle_request(context, text):
         if e.errno != errno.EINPROGRESS: 
             clean_queue(context) 
         
-
 
 def handle_remote_connected(context): 
     to_conn = context["to_conn"]
@@ -280,7 +257,6 @@ def handle_remote_connected(context):
         return 
     context["status"] = STATUS_DATA
     to_context["status"] = STATUS_DATA 
-
 
 
 def read_to_buffer(con, buf):
@@ -338,9 +314,6 @@ def handle_pollout(context):
 
 def handle_pollin(context):
     status = context["status"] 
-    if status & STATUS_HANDSHAKE: 
-        handle_handshake(context) 
-        return
     result = which_status(context) 
     if not result:
         return 
@@ -366,7 +339,7 @@ def handle_connection():
             "to_conn": None,
             "crypted": True,
             "request": None,
-            "status": STATUS_HANDSHAKE, 
+            "status": STATUS_REQUEST
             } 
 
 def handle_socket(event):

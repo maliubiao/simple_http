@@ -12,6 +12,7 @@ import signal
 import base64
 import json
 import time
+import errno
 
 from string import letters 
 from uuid import uuid4

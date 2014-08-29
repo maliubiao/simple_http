@@ -25,6 +25,7 @@ SERVER_PORT = 9988
 
 MAX_LISTEN = 1024
 REMOTE = ("127.0.0.1", 9905)
+        
 
 cons = {} 
 g = globals() 
@@ -158,9 +159,10 @@ def handle_write_later(context):
             if e.errno != EAGAIN: 
                 clean_queue(context)
             return 
+        out_buffer.truncate(0)
         if data_sent != data_count: 
             out_buffer.write(data[data_sent:])
-        out_buffer.truncate(0)
+            return 
 
 
 def handle_handshake(context): 
@@ -204,9 +206,7 @@ def handle_handshake(context):
             } 
     context["to_conn"] = request_sock
     #next status , CONNECTED
-    context["status"] = STATUS_REQUEST
-    context["request"] = ""
-
+    context["status"] = STATUS_REQUEST 
     try: 
         request_sock.connect(REMOTE)
     except socket.error as e: 
@@ -241,29 +241,17 @@ def which_status(context):
         status = STATUS_SERVER_WAIT_REMOTE
     elif raw.startswith("\x05\x01\x00"):
         status = STATUS_REQUEST 
-    elif raw == "\x05\x00": 
-        status = STATUS_SERVER_HANDSHKAE 
     else:            
         status = STATUS_DATA 
-    return status, text
+    return status, text 
 
 
 def handle_server_connected(context): 
-    try: 
-        context["from_conn"].send(SOCKS_HANDSHAKE_CLIENT) 
-    except socket.error: 
-        context["out_buffer"].write(SOCKS_HANDSHAKE_CLIENT) 
-
-    context["status"] = STATUS_SERVER_HANDSHKAE 
-
-
-def handle_server_handshake(context): 
     to_context = cons[context["to_conn"].fileno()]
-    try:
+    try: 
         context["to_conn"].send("\x05\x00")
     except socket.error: 
-        to_context["out_buffer"].write("\x05\x00") 
-    #client may REQUEST 
+        to_context["out_buffer"].write("\x05\x00")
     context["status"] = STATUS_REQUEST
     to_context["status"] = STATUS_REQUEST
     
@@ -298,7 +286,7 @@ def handle_new_request(context, text):
         return
 
     remote = (addr, port[0]) 
-    print "new request %s: %d" % remote
+    print "new request %s:%d" % remote
     context["request"] = remote
     to_context["request"] = remote 
     
@@ -368,7 +356,7 @@ def handle_pollout(context):
     status = context["status"] 
     if status & STATUS_SERVER_CONNECTED: 
         handle_server_connected(context) 
-        return
+        return 
     if context["out_buffer"].tell(): 
         handle_write_later(context) 
 
@@ -382,9 +370,6 @@ def handle_pollin(context):
     if not result:
         return
     status, text = result 
-    if status & STATUS_SERVER_HANDSHKAE: 
-        handle_server_handshake(context)
-        return 
 
     if status & STATUS_REQUEST: 
         handle_new_request(context, text) 
