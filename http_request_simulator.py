@@ -10,18 +10,23 @@ from lxml import etree
 import etree_utils
 import simple_http
 
-def getpage(url, nsecs=2):
+def getpage(url, nsecs=5):
     try:
-        _, _, content = simple_http.get(url,
-                proxy="socks5://127.0.0.1:9901")
+        a = time.time()
+        h, c, content = simple_http.get(url) 
     except Exception as e:
         raise Exception("request failed: %s error %s", (url, e)) 
-    print "=========\npage done: %s\ntimeout: %ds\n=========" % (url, nsecs)
-    t = etree.HTML(content) 
+    print "=========\npage done in %fs: %s\ntimeout: %ds\n=========" % (time.time() -a, url, nsecs) 
+    try:
+        t = etree.HTML(content) 
+    except:
+        print "fetch failed: %s" % url
+        pprint.pprint(h)
+        exit(1)
     urls = [] 
     host = simple_http.urlparse(url)["host"] 
     #find all script, img
-    for i in etree_utils.query_element(t, "[script,img]"): 
+    for i in etree_utils.query_element(t, "[script,img,link]"): 
         attrib = i.attrib 
         if "href" in attrib: 
             url_dict = simple_http.urlparse(attrib["href"])
@@ -32,17 +37,16 @@ def getpage(url, nsecs=2):
             url_dict = simple_http.urlparse(attrib["src"])
             if not url_dict["host"]:
                 url_dict["host"] = host 
-            
             urls.append(simple_http.urlunparse(url_dict)) 
-    #multiprocess get
-    pdb.set_trace()
+    #multiprocess get 
     pids = []
     for i in urls:
         pid = os.fork()
         if not pid: 
             try: 
-                simple_http.get(i, proxy="socks5://127.0.0.1:9901")
-                print "url done: %s" % i
+                a = time.time()
+                simple_http.get(i)
+                print "url done in %fs %s" % (time.time() - a, i)
             except Exception as e:
                 print "url failed: %s" % i 
                 print "error %s" % e
@@ -70,5 +74,5 @@ def getpage(url, nsecs=2):
 
 if __name__ == "__main__":
     import sys 
-    getpage(sys.argv[1], nsecs=3)
+    getpage(sys.argv[1], nsecs=5)
 

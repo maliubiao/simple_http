@@ -1,4 +1,4 @@
-import re
+import re 
 import sys 
 from lxml import etree 
 
@@ -56,9 +56,14 @@ def query_element(tree, selector):
         elements.extend(_match_one(tree, nodes, selector))
     return elements
        
+def toutf8(s):
+    if isinstance(s, unicode):
+        return s.encode("utf-8")
+    return s
+
 def dump_node(node):   
     print "tag: %s\n, line: %d\n, attrib: %s\n, text: %s\n, xpath: %s" % (
-            node.tag, node.sourceline, str(node.attrib), node.text, get_xpath(node))
+            toutf8(node.tag), node.sourceline, str(node.attrib), toutf8(node.text), get_xpath(node))
 
 def main(): 
     if len(sys.argv) < 3:
