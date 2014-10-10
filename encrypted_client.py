@@ -3,6 +3,7 @@
 
 import socket 
 import os
+import sys
 import pdb
 import errno 
 import struct
@@ -24,11 +25,20 @@ SERVER_IP = "127.0.0.1"
 SERVER_PORT = 9988
 
 MAX_LISTEN = 1024
-REMOTE = ("127.0.0.1", 9905)
-        
+REMOTE = ("106.186.112.80", 9000)
+
 
 cons = {} 
 g = globals() 
+
+#clients allowed
+allowed  = {
+        "127.0.0.1": None 
+        }
+
+forbidden  = {
+        }
+
 
 EAGAIN = errno.EAGAIN
 
@@ -41,22 +51,22 @@ STATUS_DATA = 0x1 << 4
 STATUS_SERVER_HANDSHKAE = 0x1 << 5
 STATUS_SERVER_REQUEST = 0x1 << 6 
 STATUS_SERVER_CONNECTED = 0x1 <<7
-STATUS_SERVER_WAIT_REMOTE = 0x1 << 8
+STATUS_SERVER_WAIT_REMOTE = 0x1 << 8 
 
 
 def run_as_user(user):
     try:
         db = pwd.getpwnam(user)
     except KeyError:
-        raise Exception("user doesn't exists") 
+        raise OSError("user doesn't exists") 
     try:
         os.setgid(db.pw_gid)
     except OSError:        
-        raise Exception("change gid failed") 
+        raise OSError("change gid failed") 
     try:
         os.setuid(db.pw_uid)
     except OSError:
-        raise Exception("change uid failed") 
+        raise OSError("change uid failed") 
 
 
 
@@ -67,13 +77,10 @@ def daemonize():
     except OSError as e:
         print e
     if not status: 
-        os.setsid()
-        os.close(0)
-        os.close(1)
-        os.close(2)
-        stdin = open("/dev/null", "r")
-        os.dup2(log_file.fileno(), 1)
-        os.dup2(log_file.fileno(), 2)
+        os.setsid() 
+        sys.stdin = open("/dev/null", "r")
+        sys.stdout = log_file
+        sys.stderr = log_file
         try:
             status2 = os.fork()
         except OSError as e:
@@ -190,7 +197,7 @@ def handle_handshake(context):
         request_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         request_sock.setblocking(0)  
         request_fd = request_sock.fileno()
-        epoll_object.register(request_fd, EPOLLIN|EPOLLOUT)
+        epoll_object.register(request_fd, EPOLLIN|EPOLLOUT|EPOLLERR)
     except Exception as e: 
         clean_queue(context)
         return 
@@ -210,10 +217,24 @@ def handle_handshake(context):
     try: 
         request_sock.connect(REMOTE)
     except socket.error as e: 
-        #close connection if it's a real exception
+        #close connection if it's a real exception 
         if e.errno != errno.EINPROGRESS: 
             clean_queue(context) 
 
+def notify_server_down(context): 
+    status = "HTTP/1.1 500 Internal Server Error"
+    content_type = "Content-Type: text/html"
+    msg = """<html>
+        <head>转发服务器已经关闭</head>
+        <body><h1>转发服务器已经关闭，请联系作者, 或者刷新重试</h1></body> 
+    </html>
+    """
+    content_length = "Content-Length: %d" % len(msg)
+    response =  "\r\n".join((status, content_type, content_length, msg))
+    try:
+        count = context["from_conn"].send(response) 
+    except socket.error:
+        context["out_buffer"].write(response)
 
 def which_status(context): 
     fd = context["fd"]
@@ -283,13 +304,11 @@ def handle_new_request(context, text):
         port = unpack(">H", addr_port)
     except struct.error: 
         clean_queue(context)
-        return
-
+        return 
     remote = (addr, port[0]) 
     print "new request %s:%d" % remote
-    context["request"] = remote
+    context["request"] = remote 
     to_context["request"] = remote 
-    
     try:        
         to_conn.send(text.translate(SD)) 
     except socket.error as e: 
@@ -382,8 +401,22 @@ def handle_pollin(context):
     if status & STATUS_DATA: 
         handle_redirect_data(context, text)
 
+def close_conn(conn): 
+    try:
+        conn.shutdown(socket.SHUT_RDWR) 
+        conn.close() 
+    except Exception:
+        pass
+
 def handle_connection(): 
     conn, addr = sock.accept() 
+    ip  = addr[0]
+    if ip in forbidden:
+        close_conn(conn)
+        return 
+    if not ip in allowed:
+        close_conn(conn)
+        return 
     fd = conn.fileno() 
     conn.setblocking(0)
     epoll_object.register(fd, EPOLLIN|EPOLLOUT|EPOLLERR)
@@ -395,7 +428,7 @@ def handle_connection():
             "to_conn": None,
             "crypted": True,
             "request": None,
-            "status": STATUS_HANDSHAKE, 
+            "status": STATUS_HANDSHAKE 
             } 
 
 def handle_socket(event): 
@@ -404,6 +437,31 @@ def handle_socket(event):
     if event & EPOLLERR:
         raise Exception("fatal error") 
 
+
+def handle_event(ep): 
+    fast = False
+    for fd, event in ep.poll(1): 
+        if fd == sockfd: 
+            handle_socket(event) 
+            continue
+        if fd not in cons: 
+            continue 
+        context = cons[fd] 
+        context["fd"] = fd 
+        if event & EPOLLERR:
+            clean_queue(context)
+            continue
+        if (not (event & EPOLLIN)) and (
+            not context["out_buffer"].tell()) and (
+                not context["status"] & STATUS_SERVER_CONNECTED): 
+            continue 
+        fast = True 
+        if event & EPOLLOUT:
+            handle_pollout(context) 
+        if event & EPOLLIN:
+            handle_pollin(context) 
+
+    return fast
 
 def poll_wait(): 
     fast = True
@@ -415,29 +473,9 @@ def poll_wait():
         else:
             sleep_time = 0.1 
         sleep(sleep_time) 
-
-        for fd, event in ep_poll(1): 
-            if fd == sockfd: 
-                handle_socket(event) 
-                continue
-            if fd not in cons: 
-                continue 
-            context = cons[fd] 
-            context["fd"] = fd 
-            if event & EPOLLERR:
-                clean_queue(context)
-                continue 
-            if (not (event & EPOLLIN)) and (
-                not context["out_buffer"].tell()) and (
-                    not context["status"] & STATUS_SERVER_CONNECTED): 
-                continue 
-            fast = True
-            if event & EPOLLOUT:
-                handle_pollout(context) 
-            if event & EPOLLIN:
-                handle_pollin(context) 
+        fast = handle_event(epoll_object) 
 
 if __name__ == "__main__":
     set_globals() 
-    #daemonize()
+    daemonize()
     poll_wait()

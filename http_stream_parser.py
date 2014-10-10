@@ -33,7 +33,7 @@ def parse(stream):
     header_end = stream.find("\r\n\r\n")
     if header_end < 0:
         raise Exception("no header")
-    header, cookie = simple_http.parse_header(stream[:header_end]) 
+    header = simple_http.parse_server_header(stream[:header_end]) 
     if header.get("Content-Encoding") == "gzip":
         gzip_maybe = True
     if header.get("Content-Encoding") == "deflate":
@@ -54,7 +54,7 @@ def parse(stream):
     if deflate_maybe:
         final = zlib.decompress(content_buffer.getvalue(), -zlib.MAX_WBITS)
     stream_buffer.close() 
-    return header, cookie, final 
+    return header, final 
 
 if __name__ == "__main__": 
     f = open(sys.argv[1], "r")

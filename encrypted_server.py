@@ -3,6 +3,7 @@
 
 import socket 
 import os
+import sys
 import pdb
 import errno 
 import struct
@@ -40,15 +41,15 @@ def run_as_user(user):
     try:
         db = pwd.getpwnam(user)
     except KeyError:
-        raise Exception("user doesn't exists") 
+        raise OSError("user doesn't exists") 
     try:
         os.setgid(db.pw_gid)
     except OSError:        
-        raise Exception("change gid failed") 
+        raise OSError("change gid failed") 
     try:
         os.setuid(db.pw_uid)
     except OSError:
-        raise Exception("change uid failed") 
+        raise OSError("change uid failed") 
 
 def daemonize():
     log_file = open("/tmp/encrypted_server.log", "w+", buffering=False)
@@ -57,13 +58,10 @@ def daemonize():
     except OSError as e:
         print e
     if not status: 
-        os.setsid()
-        os.close(0)
-        os.close(1)
-        os.close(2)
-        stdin = open("/dev/null", "r")
-        os.dup2(log_file.fileno(), 1)
-        os.dup2(log_file.fileno(), 2)
+        os.setsid() 
+        sys.stdin = open("/dev/null", "r")
+        sys.stdout = log_file
+        sys.stderr = log_file
         try:
             status2 = os.fork()
         except OSError as e:
@@ -348,6 +346,30 @@ def handle_socket(event):
     if event & EPOLLERR:
         raise Exception("fatal error") 
 
+def handle_event(ep): 
+    fast = True
+    for fd, event in ep.poll(1): 
+        if fd == sockfd: 
+            handle_socket(event) 
+            continue
+        if fd not in cons: 
+            continue 
+        context = cons[fd] 
+        context["fd"] = fd 
+        if event & EPOLLERR:
+            clean_queue(context)
+            continue 
+        if (not (event & EPOLLIN)) and (
+            not context["out_buffer"].tell()) and (
+                not context["status"] & STATUS_SERVER_CONNECTED): 
+            continue 
+        fast = True
+        if event & EPOLLOUT:
+            handle_pollout(context) 
+        if event & EPOLLIN:
+            handle_pollin(context) 
+    return fast
+
 def poll_wait(): 
     fast = True
     ep_poll = epoll_object.poll
@@ -358,29 +380,12 @@ def poll_wait():
         else:
             sleep_time = 0.1 
         sleep(sleep_time) 
+        try: 
+            fast = handle_event(epoll_object) 
+        except Exception as e:
+            print e
 
-        for fd, event in ep_poll(1): 
-            if fd == sockfd: 
-                handle_socket(event) 
-                continue
-            if fd not in cons: 
-                continue 
-            context = cons[fd] 
-            context["fd"] = fd 
-            if event & EPOLLERR:
-                clean_queue(context)
-                continue 
-            if (not (event & EPOLLIN)) and (
-                not context["out_buffer"].tell()) and (
-                    not context["status"] & STATUS_WAIT_REMOTE):
-                continue 
-            fast = True
-            if event & EPOLLOUT:
-                handle_pollout(context) 
-            if event & EPOLLIN:
-                handle_pollin(context) 
-
-if __name__ == "__main__": 
+if __name__ == "__main__":
     set_globals() 
     #run_as_user("quark") 
     #daemonize()

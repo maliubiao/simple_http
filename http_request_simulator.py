@@ -13,7 +13,7 @@ import simple_http
 def getpage(url, nsecs=5):
     try:
         a = time.time()
-        h, c, content = simple_http.get(url) 
+        h, content = simple_http.get(url) 
     except Exception as e:
         raise Exception("request failed: %s error %s", (url, e)) 
     print "=========\npage done in %fs: %s\ntimeout: %ds\n=========" % (time.time() -a, url, nsecs) 
@@ -32,12 +32,12 @@ def getpage(url, nsecs=5):
             url_dict = simple_http.urlparse(attrib["href"])
             if not url_dict["host"]:
                 url_dict["host"] = host 
-            urls.append(simple_http.urlunparse(url_dict)) 
+            urls.append(simple_http.generate_url(url_dict)) 
         if "src" in attrib: 
             url_dict = simple_http.urlparse(attrib["src"])
             if not url_dict["host"]:
                 url_dict["host"] = host 
-            urls.append(simple_http.urlunparse(url_dict)) 
+            urls.append(simple_http.generate_url(url_dict)) 
     #multiprocess get 
     pids = []
     for i in urls:
