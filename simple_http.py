@@ -1,5 +1,4 @@
-#-*-encoding=utf-8-*-
-
+#-*-encoding=utf-8-*- 
 import os.path 
 import socket
 import io 
@@ -82,11 +81,16 @@ for x in string.letters:
 
 default_header = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        #"Accept-Encoding": "gzip, deflate",
+        "Accept-Encoding": "gzip, deflate",
         "Accept-Language": "zh,zh-cn;q=0.8,en-us;q=0.5,en;q=0.3", 
         "Connection": "keep-alive",
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:25.0) Gecko/20100101 Firefox/32.0"
         } 
+
+download_header = {
+        "Accept": "*/*",
+        "Connection": "Keep-Alive"
+        }
 
 #common mimetypes
 common_types = {
@@ -239,7 +243,7 @@ def generate_query(query):
     ql = []
     for k, v in query.items():
         ql.append("%s=%s" % (quote_plus(k), quote_plus(v)))
-    return "&".append(ql) 
+    return "&".join(ql) 
 
 
 def parse_query(query):
@@ -805,21 +809,31 @@ def general_post(url, **kwargs):
     return send_http(remote, use_ssl, body, 
             kwargs.get("timeout", default_timeout), proxy, False) 
 
-def handle_chunked(data, normal_stream):
-    prev_chunk = 0
-    next_chunk = 0
-    this_chunk = 0 
-    while True:
-        next_chunk = data.find("\r\n", prev_chunk)
-        if next_chunk < 0: return
-        try:
-            this_chunk = int(data[prev_chunk:next_chunk], 16)
-        except: 
-            raise socket.error("chunked error")
-        next_chunk += 2
-        if not this_chunk: return
-        normal_stream.write(data[next_chunk: next_chunk+this_chunk])
-        prev_chunk = next_chunk + this_chunk + 2
+def handle_chunked(cbuf, normal_stream): 
+    end = cbuf.tell()
+    cbuf.seek(0)
+    goout = 0
+    while True: 
+        num = "" 
+        while True: 
+            char = cbuf.read(1) 
+            if not char:
+                goout = True
+                break 
+            if char == "\r": 
+                break
+            num += char 
+        if goout:
+            break
+        cbuf.seek(1, io.SEEK_CUR)
+        x = int(num, 16)
+        if not x:
+            break
+        chunk = cbuf.read(x)
+        cbuf.seek(2, io.SEEK_CUR)
+        if len(chunk) != x:
+            break
+        normal_stream.write(chunk) 
 
 
 def wait_header(data, hbuf): 
@@ -858,7 +872,7 @@ def wait_response(remote, header_only=False):
             #again
             if not header:
                 continue 
-            if header_only:
+            if header_only: 
                 break
             if "Content-Length" in header:
                 total_length = int(header["Content-Length"])
@@ -868,8 +882,7 @@ def wait_response(remote, header_only=False):
             if header.get("Transfer-Encoding") == "chunked": 
                 chunked = True 
             if header.get("Accept-Ranges") == "bytes":
-                has_range = True
-                length_unkown = True
+                has_range = True 
             if header.get("Content-Range"):
                 length_unkown = False 
             has_header = True 
@@ -885,24 +898,25 @@ def wait_response(remote, header_only=False):
         if chunked:
             chunked_end = data.rfind("0\r\n\r\n")
             if chunked_end > -1: 
-                chunked_content = cbuf.getvalue()
-                cbuf.truncate(0)
-                handle_chunked(chunked_content, cbuf) 
-                return header, cbuf.getvalue()
+                cbuf.getvalue() 
+                normal = cStringIO.StringIO()
+                handle_chunked(cbuf, normal) 
+                cbuf.close() 
+                return header, normal.getvalue()
         #if we don't know the end, assume HEADER_END
         if length_unkown and not chunked:
             entity_end = data.rfind(HEADER_END)
             if entity_end == (len(data) -4): 
                 break 
         #Content-Length
-        if cbuf.tell() >= total_length:
-            break; 
+        if cbuf.tell() >= total_length: 
+            break 
         #no more data 
         if ((header.get("Connection") == "close" or
                 header["status"] >= 300 or
                 header["status"] < 200) and
                 length_unkown and
-                not chunked):
+                not chunked): 
             break 
     return header, cbuf.getvalue() 
 

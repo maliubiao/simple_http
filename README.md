@@ -1,36 +1,61 @@
-##simple_http
+##一个简单好用的HTTP库, 支持标准的http方法
 ```shell
-header, cookie, content = simple_http.get("https://github.com") 
-In [11]: pprint.pprint(header)
-{'Cache-Control': 'private, max-age=0, must-revalidate',
- 'Content-Encoding': 'gzip',
- 'Content-Security-Policy': "default-src *; script-src 'self' https://github.global.ssl.fastly.net https://ssl.google-analytics.com https://collector-cdn.github.com https://analytics.githubapp.com https://embed.github.com https://raw.github.com; style-src 'self' 'unsafe-inline' https://github.global.ssl.fastly.net; object-src 'self' https://github.global.ssl.fastly.net",
+In [4]: header, content = simple_http.get("https://github.com")
+In [5]: header
+Out[5]: 
+{'Cache-Control': 'max-age=0, private, must-revalidate',
+ 'Content-Security-Policy': "default-src *; script-src assets-cdn.github.com www.google-analytics.com collector-cdn.github.com; object-src assets-cdn.github.com; style-src 'self' 'unsafe-inline' 'unsafe-eval' assets-cdn.github.com; img-src 'self' data:assets-cdn.github.com identicons.github.com www.google-analytics.com collector.githubapp.com *.githubusercontent.com *.gravatar.com *.wp.com; media-src 'none'; frame-src 'self' render.githubusercontent.com gist.github.com www.youtube.com player.vimeo.com checkout.paypal.com; font-src assets-cdn.github.com; connect-src 'self' ghconduit.com:25035 live.github.com uploads.github.com s3.amazonaws.com",
  'Content-Type': 'text/html; charset=utf-8',
- 'Date': 'Thu, 02 Jan 2014 08:21:01 GMT',
- 'ETag': '"57e6cfb59a5805bc99dc31df0030b0d4"',
+ 'Date': 'Fri, 10 Oct 2014 13:46:09 GMT',
+ 'ETag': '"37f568db7e0c51e3987492f601ac68d2"',
  'Server': 'GitHub.com',
- 'Set-Cookie': 'logged_in=no; domain=.github.com; path=/; expires=Mon, 02-Jan-2034 08:21:01 GMT; secure; HttpOnly\r\n_gh_sess=BAh7BzoPc2Vzc2lvbl9pZCIlN2ZkNzQxMmU0MTAwNDVjMDE3ZjI5NGE2YjQxZmZkMTM6EF9jc3JmX3Rva2VuSSIxaGhPKzg2b1ptSGpTRFphYjJCd0ZBYS9IbXVIZWR4THhzUjZibTNUN0tFcz0GOgZFRg%3D%3D--8681a13f25ede942ba66551b0c065eb1c31529fa; path=/; secure; HttpOnly',
+ 'Set-Cookie': [{' HttpOnly': True,
+   ' path': '/',
+   ' secure': True,
+   'cookie': '_gh_sess=eyJzZXNzaW9uX2lkIjoiYmFmYzhiN2E4Yjk1YmQ3NmI0Y2UwMmI0NjRhNjU1MDUiLCJfY3NyZl90b2tlbiI6Ijl2TGNCUWdlODJIVS82UmFHSmp6ZlU2QUFETlFFalRnSTg0QUVnNUtWbms9In0%3D--19d5df32ed9b1662fc7526b563405c96204952bc'}],
  'Status': '200 OK',
- 'Strict-Transport-Security': 'max-age=2592000',
+ 'Strict-Transport-Security': 'max-age=31536000; includeSubdomains; preload',
  'Transfer-Encoding': 'chunked',
  'Vary': 'Accept-Encoding',
+ 'X-Content-Type-Options': 'nosniff',
  'X-Frame-Options': 'deny',
- 'X-GitHub-Request-Id': 'B7D13607:5774:4AB6EAC:52C5216C',
- 'X-Runtime': '5',
+ 'X-GitHub-Request-Id': 'DF418D9C:2C54:CC51D3:5437E321',
+ 'X-Runtime': '0.008287',
+ 'X-Served-By': 'b26767d88b31b8e1e88f61422786ec5e',
+ 'X-UA-Compatible': 'IE=Edge,chrome=1',
+ 'X-XSS-Protection': '1; mode=block',
  'message': 'OK',
  'protocol': 'HTTP/1.1',
- 'status': 200}
+ 'status': 200} 
 
-In [12]: pprint.pprint(cookie)
-[OrderedDict([('cookie', 'logged_in=no'), ('domain', '.github.com'), ('path', '/'), ('expires', 'Mon, 02-Jan-2034 08:21:01 GMT'), (' secure', ''), (' HttpOnly', '')]),
- OrderedDict([('cookie', '_gh_sess=BAh7BzoPc2Vzc2lvbl9pZCIlN2ZkNzQxMmU0MTAwNDVjMDE3ZjI5NGE2YjQxZmZkMTM6EF9jc3JmX3Rva2VuSSIxaGhPKzg2b1ptSGpTRFphYjJCd0ZBYS9IbXVIZWR4THhzUjZibTNUN0tFcz0GOgZFRg%3D%3D--8681a13f25ede942ba66551b0c065eb1c31529fa'), ('path', '/'), (' secure', ''), (' HttpOnly', '')])]
-
-In [14]: pprint.pprint(content[:1024])
+In [6]: pprint.pprint(content[:1024])
 '<!DOCTYPE html>\n<html>\n  <head prefix="og: http://ogp.me/ns# fb: http://ogp.me/ns/fb# githubog: http://ogp.me/ns/fb/githubog#">\n    <meta charset=\'utf-8\'>\n    <meta http-equiv="X-UA-Compatible" content="IE=edge">\n        <title>GitHub \xc2\xb7 Build software better, together.</title>\n    <link rel="search" type="application/opensearchdescription+xml" href="/opensearch.xml" title="GitHub" />\n    <link rel="fluid-icon" href="https://github.com/fluidicon.png" title="GitHub" />\n    <link rel="apple-touch-icon" sizes="57x57" href="/apple-touch-icon-114.png" />\n    <link rel="apple-touch-icon" sizes="114x114" href="/apple-touch-icon-114.png" />\n    <link rel="apple-touch-icon" sizes="72x72" href="/apple-touch-icon-144.png" />\n    <link rel="apple-touch-icon" sizes="144x144" href="/apple-touch-icon-144.png" />\n    <link rel="logo" type="image/svg" href="https://github-media-downloads.s3.amazonaws.com/github-logo.svg" />\n    <meta property="og:image" content="https://github.global.ssl.fastly.net/images/modules/logos_page/O'
-...
+...  
 ```
-###Proxy: HTTP and SOCKS5
-####socks5
+###使用不同的header
+默认情况下simple_http使用firefox的User-Agent, 修改示例
+```shell
+myheader = {
+	"Accept": ...
+}
+simple_http.get("https://google.com", header=myheader)
+```
+###GET请求添加参数
+```shell
+query = {
+	"params": "value"
+}
+simple_http.get("https://google.com", query=myheader) 
+```
+###POST添加参数
+```shell
+payload = {
+	"params": "value"
+}
+simple_http.post("https://google.com", payload=myheader) 
+``` 
+###使用代理 HTTP and SOCKS5
+####Socks5
 ```shell 
 In [8]: simple_http.get("https://google.com", proxy='socks5://127.0.0.1:8888')
 Out[8]: 
@@ -50,7 +75,7 @@ Out[8]:
  None,
  '<HTML><HEAD><meta http-equiv="content-type" content="text/html;charset=utf-8">\n<TITLE>301 Moved</TITLE></HEAD><BODY>\n<H1>301 Moved</H1>\nThe document has moved\n<A HREF="https://www.google.com/">here</A>.\r\n</BODY></HTML>\r\n')
 ```
-####http
+####http代理
 ```shell 
 In [46]: simple_http.get("https://google.com", proxy='http://127.0.0.1:8088')
 Out[46]: 
@@ -72,7 +97,71 @@ Out[46]:
  None,
  '<HTML><HEAD><meta http-equiv="content-type" content="text/html;charset=utf-8">\n<TITLE>301 Moved</TITLE></HEAD><BODY>\n<H1>301 Moved</H1>\nThe document has moved\n<A HREF="https://www.google.com/">here</A>.\r\n</BODY></HTML>\r\n')
 ``` 
-###http request simulator
+
+##etree_utils.py是用于快速确定xpath的工具
+因为浏览器会动态修改DOM，从源代码界面取得xpath经常不能用.    
+常见的Beautifulsoup效率非常低, 又经常有些奇怪的bug, lxml配合xpath才是抓取网页内容的最佳方案   
+主要是辅助快速确定目标的xpath, 使用语法是  
+1. a 指tag选择器  
+2. .ele 是类选择器  
+3. #id 是ID选择器  
+4. href="link", =号是属性选择器  
+5. >是行选择器   
+###示例
+```shell
+python etree_utils.py htmlfile 语法
+
+tag: a
+, line: 379
+, attrib: {'href': '/album/120712490', 'title': u'\xe8\x9d\xb6\xe6\x81\x8b\xe8\x8a\xb1'}
+, text: 目录
+, xpath: /html/body/div/ul/li[25]/div/span[6]/a
+===============
+tag: a
+, line: 385
+, attrib: {'href': 'javascript:;', 'class': 'btn btn-b play-selected-hook'}
+, text: 
+        
+, xpath: /html/body/div/div[2]/a[1]
+===============
+tag: a
+, line: 394
+, attrib: {'href': 'javascript:;', 'class': 'btn btn-b add-selected-hook'}
+, text: 
+        
+, xpath: /html/body/div/div[2]/a[2]
+===============
+tag: a
+, line: 403
+, attrib: {'href': 'javascript:;', 'class': 'btn btn-b collect-selected-hook'}
+, text: 
+        
+, xpath: /html/body/div/div[2]/a[3]
+===============
+tag: a
+, line: 412
+, attrib: {'href': 'javascript:;', 'class': 'btn btn-b down-selected-hook'}
+, text: 
+        
+, xpath: /html/body/div/div[2]/a[4]
+
+``` 
+
+
+##encryped_client/server是SOCKS5转发代理 
+1. 通过python simple_table.py得到key
+2. 要使用先自己修改代码里的端口与服务器地址等配置信息
+3. 两者都采用异步非阻塞的高效实现, 在本机测试时cpu从来没有过1%.
+4. 加密机制是随机密码表, 转换效率非常高
+5. encrypted_server.py与key放到墙外, encrypted_client.py与key放到本地 
+
+##http流解析
+主要是为了测试客户端与服务端, 将网络流DUMP到文件，再解析
+```shell
+python http_stream_parser.py stream.file
+```
+
+##http模拟器, 多进程并发模拟浏览器操作
 ```shell 
 $python http_request_simulator.py "weibo.com"
 =========
@@ -105,5 +194,4 @@ url done: http://i1.sinaimg.cn/unipro/pub/suda_m_v629.js
 url done: http://beacon.sina.com.cn/e.gif?noScript
 url done: http://tp2.sinaimg.cn/1759023505/50/0/0
 request done, kill 0 children
-```
-
+``` 
