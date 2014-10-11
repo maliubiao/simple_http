@@ -865,7 +865,8 @@ def wait_response(remote, header_only=False):
             data = remote.recv(40960) 
         except socket.error: 
             raise 
-        if has_header and not data:
+        #remote closed
+        if not data:
             break 
         if not has_header: 
             header, data = wait_header(data, hbuf)
