@@ -7,7 +7,7 @@ import time
 import pprint 
 from lxml import etree
 
-import etree_utils
+import etree_util
 import simple_http
 
 def getpage(url, nsecs=5):
@@ -26,7 +26,7 @@ def getpage(url, nsecs=5):
     urls = [] 
     host = simple_http.urlparse(url)["host"] 
     #find all script, img
-    for i in etree_utils.query_element(t, "[script,img,link]"): 
+    for i in etree_util.query_element(t, "[script,img,link]"): 
         attrib = i.attrib 
         if "href" in attrib: 
             url_dict = simple_http.urlparse(attrib["href"])
