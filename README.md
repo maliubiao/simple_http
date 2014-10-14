@@ -30,15 +30,37 @@ Out[5]:
 
 In [6]: pprint.pprint(content[:1024])
 '<!DOCTYPE html>\n<html>\n  <head prefix="og: http://ogp.me/ns# fb: http://ogp.me/ns/fb# githubog: http://ogp.me/ns/fb/githubog#">\n    <meta charset=\'utf-8\'>\n    <meta http-equiv="X-UA-Compatible" content="IE=edge">\n        <title>GitHub \xc2\xb7 Build software better, together.</title>\n    <link rel="search" type="application/opensearchdescription+xml" href="/opensearch.xml" title="GitHub" />\n    <link rel="fluid-icon" href="https://github.com/fluidicon.png" title="GitHub" />\n    <link rel="apple-touch-icon" sizes="57x57" href="/apple-touch-icon-114.png" />\n    <link rel="apple-touch-icon" sizes="114x114" href="/apple-touch-icon-114.png" />\n    <link rel="apple-touch-icon" sizes="72x72" href="/apple-touch-icon-144.png" />\n    <link rel="apple-touch-icon" sizes="144x144" href="/apple-touch-icon-144.png" />\n    <link rel="logo" type="image/svg" href="https://github-media-downloads.s3.amazonaws.com/github-logo.svg" />\n    <meta property="og:image" content="https://github.global.ssl.fastly.net/images/modules/logos_page/O'
-...  
-```
+``` 
+###返回头部 
+header["status"] 是状态码   
+header["message"] 是message   
+header["protocol"] 是协议   
+它们跟其它头混到在一个字典里, 因为没有区分的必要   
+
 ###使用不同的header
 默认情况下simple_http使用firefox的User-Agent, 修改示例
 ```shell
 myheader = {
 	"Accept": ...
 }
-simple_http.get("https://google.com", header=myheader)
+simple_http.get("https://google.com", header=myheader) 
+```
+###使用Cookie
+```shell
+cookie = {
+	"name": "value"
+}
+simple_http.get("https://github.com", cookie=cookie)
+```
+###从header里取Cookie用
+```shell
+simple_http.client_cookie(header["Set-Cookie"])
+从
+{' path': '/', ' secure': True, 'cookie': '_gh_sess=eyJzZXNzaW9uX2lkIjoiYTU5YTVhMmNjMTE1M2Y2ODU5MDczNjlmNGMzYWVmY2YiLCJfY3NyZl90b2tlbiI6IlVRUy8wdjkycnFhL2R0SGk1NVlkaDQ4d0lnSmljUEYwQzNOSWlGaG50bjQ9In0%3D--177119b094b3292c35f1573c8bd18a41fe8807ef', ' HttpOnly': True}
+转换到
+{
+	"_gh_sess": "...."
+}
 ```
 ###GET请求添加参数
 ```shell
@@ -54,6 +76,14 @@ payload = {
 }
 simple_http.post("https://google.com", payload=payload) 
 ``` 
+###POST里使用文件
+```shell
+payload = {
+	"name": open("test", "r")
+}
+simple_http.post("https://google.com", payload=payload)
+``` 
+
 ###使用代理 HTTP and SOCKS5
 ####Socks5
 ```shell 

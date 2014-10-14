@@ -303,7 +303,6 @@ def generate_post(header, payload):
         return "".join(cl)
 
 
-
 def quote(url): 
     result = [] 
     for char in url: 
@@ -533,8 +532,8 @@ def generate_setcookie(cookie_list):
         for k,v in cookie_dict.items():
             if k == "cookie":
                 item_list.append('%s; ' % v)
-                continue
-            item_list.append('%s=%s; ' % (k, v))
+            else:    
+                item_list.append('%s=%s; ' % (k, v))
         ret.append("".join(items_list)[:-2])
         ret.append("\r\n") 
     return "".join(ret)[:-2]
@@ -544,11 +543,9 @@ def parse_setcookie(string):
     cookie_list = [] 
     for line in string.split("\r\n"):
         cookie = {}
-        for index, part in enumerate(line.split(";")):
-            #cookie, kv
-            if index == 0:
-                cookie["cookie"] = part
-                continue
+        lines = line.split(";")
+        cookie["cookie"] = lines[0]
+        for part in lines[1:]: 
             kv = part.split("=")
             #path=/ or httponly
             if len(kv) == 2 : 
@@ -922,8 +919,8 @@ def wait_response(remote, header_only=False):
     return header, cbuf.getvalue() 
 
 
-def connect_sock5(sock, server): 
-    sock.connect(proxy_server) 
+def connect_sock5(sock, remote, server): 
+    sock.connect(server) 
     #socks5 handshake
     sock.send("\x05\x01\x00") 
     if not sock.recv(4).startswith("\x05\x00"): 
@@ -949,7 +946,7 @@ def connect_proxy(sock, remote, proxy):
         sock.connect((proxyd["host"], proxyd["port"])) 
     elif scheme == "socks5": 
         proxy_type = "socks5"
-        connect_sock5((proxyd["host"], int(proxyd["port"]))) 
+        connect_sock5(sock, remote, (proxyd["host"], int(proxyd["port"]))) 
     else:
         raise socket.error("unknown proxy type")
     return proxy_type 
