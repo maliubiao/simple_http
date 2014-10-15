@@ -40,6 +40,7 @@ def getpage(url, nsecs=5):
             urls.append(simple_http.generate_url(url_dict)) 
     #multiprocess get 
     pids = []
+    urls = list(set(urls))
     for i in urls:
         pid = os.fork()
         if not pid: 

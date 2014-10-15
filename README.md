@@ -38,7 +38,8 @@ header["protocol"] 是协议
 它们跟其它头混到在一个字典里, 因为没有区分的必要   
 
 ###使用不同的header
-默认情况下simple_http使用firefox的User-Agent, 修改示例
+默认情况下simple_http使用firefox的User-Agent, 
+请注意此库不会把参数里的其它类型自动转化为str, 用其它类型会直接报错
 ```shell
 myheader = {
 	"Accept": ...

@@ -30,20 +30,20 @@ reversed_table = {
         "\x23": "%23", ##
         "\x24": "%24", #$
         "\x26": "%26", #&
-        #0x27: "%27", #'
-        #0x28: "%28", #(
-        #0x29: "%29", #)
+        "\x27": "%27", #'
+        "\x28": "%28", #(
+        "\x29": "%29", #)
         "\x2A": "%2A", #*
         "\x2B": "%2B", #+
         "\x2C": "%2C", #,
-        "\x2F": "%2F", #/
+        #"\x2F": "%2F", #/
         "\x3A": "%3A", #:
         "\x3B": "%3B", #;
         "\x3D": "%3D", #=
         "\x3F": "%3F", #?
         "\x40": "%40", #@
-        #0x5B: "%5B", #[
-        #0x5D: "%5D" #]
+        "\x5B": "%5B", #[
+        "\x5D": "%5D" #]
         }
 
 #使用0x0 - xff数组优化查找
@@ -55,7 +55,7 @@ common_chars_table = {
         "\x20": "%20", #space
         "\x22": "%22", #"
         "\x25": "%25", #%
-        "\x2D": "%2D", #-
+        #"\x2D": "%2D", #-
         #0x2E: "%2E", #.
         "\x3C": "%3C", #<
         "\x3E": "%3E", #>
@@ -330,8 +330,12 @@ def unquote(url):
 
 def quote_plus(url): 
     if ' ' in url:
-        return quote(url.replace(' ', '+')) 
-    return quote(url)
+        #dirty hack
+        convert_table[0x20] = '+'
+        ret = quote(url) 
+        convert_table[0x20] = '%20'
+        return ret
+    return quote(url) 
 
 
 def unquote_plus(url):
@@ -368,7 +372,11 @@ def generate_url(urldict):
     if "query" in urldict: 
         _append("?" + urldict["query"]) 
     if "params" in urldict: 
-        _append(";" + ";".join(urldict["params"])) 
+        if isinstance(urldict["params"], list):
+            _append(";" + ";".join(urldict["params"])) 
+        else:
+            _append(";")
+            _append(urldict["params"])
     if "fragment" in urldict:  
         _append("#")
         _append(urldict["fragment"]) 
@@ -411,7 +419,7 @@ def urlparse(url):
                 result["scheme"] =  url[:i]
                 mark = i + 2 
                 remain = "host" 
-            else: 
+            else:    
                 #host:port
                 if url[i+1].isdigit():
                     #next port
@@ -423,8 +431,7 @@ def urlparse(url):
                     result["user"] = url[mark:i]  
                     #next password
                     status = 2 
-                    remain = "password"
-
+                    remain = "password" 
         elif c == "/": 
             if status >= 5: 
                 continue
