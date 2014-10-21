@@ -1,6 +1,7 @@
 import simple_http
 import pdb
 import os.path
+import socket
 from lxml import etree
 
 p1_xpath = "/html/body/div[4]/div/div[7]/form/table/table/table/table/table/tbody/tr/th/span[1]/a"
@@ -39,7 +40,10 @@ def down_one(title, url):
             continue
         if not "jpg" in v.attrib["src"]:
             continue
-        h, c = simple_http.get(v.attrib["src"], proxy=proxy) 
+        try:
+            h, c = simple_http.get(v.attrib["src"], proxy=proxy) 
+        except socket.timeout:
+            continue
         if h["status"] != 200:
             if h["status"] == 302:
                 h, c = simple_http.get(h["Location"], proxy=proxy)
@@ -74,9 +78,14 @@ def down_page(tid, pid):
         url.extend(b)
     else: 
         url.extend(t.xpath(pn_xpath)) 
-    for i,v in enumerate(url):
+    for i,v in enumerate(url): 
+        try:
+            down_one(v.text.encode("utf-8"), base + v.attrib["href"]) 
+        except OSError: 
+            print "skip, [p%d-%d]: %s" % (pid, i+1, v.text)
+            continue
         print "[p%d-%d]: %s" % (pid, i+1, v.text)
-        down_one(v.text.encode("utf-8"), base + v.attrib["href"]) 
+
 
 if __name__ == "__main__":
     import sys, argparse
@@ -88,5 +97,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.t: 
         proxy = args.p
-        down_page(thread[args.t], args.i)
-
+        down_page(thread[args.t], args.i) 

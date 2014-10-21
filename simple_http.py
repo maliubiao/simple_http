@@ -203,14 +203,18 @@ METHOD_OPTIONS = "OPTIONS "
 METHOD_TRACE = "TRACE "
 METHOD_HEAD = "HEAD " 
 
-BOUNDARY = uuid4().hex
-BOUNDARY_STRING = "--%s\r\n" % BOUNDARY
-BOUNDARY_END = "--%s--" % BOUNDARY
-FORM_FILE = 'Content-Disposition: form-data; name="%s"; filename="%s"\r\nContent-Type: %s\r\n\r\n' 
-FORM_STRING = 'Content-Disposition: form-data; name="%s"\r\n\r\n%s\r\n' 
-FORM_SIMPLE_TYPE = "application/x-www-form-urlencoded"
-FORM_COMPLEX_TYPE = "multipart/form-data; boundary=%s" % BOUNDARY 
 
+def set_boundary(uid):
+    g = globals()
+    g["BOUNDARY"] = uid
+    g["BOUNDARY_STRING"] = "--%s\r\n" % BOUNDARY
+    g["BOUNDARY_END"] = "--%s--" % BOUNDARY
+    g["FORM_FILE"] ='Content-Disposition: form-data; name="%s"; filename="%s"\r\nContent-Type: %s\r\n\r\n' 
+    g["FORM_STRING"] = 'Content-Disposition: form-data; name="%s"\r\n\r\n%s\r\n' 
+    g["FORM_SIMPLE_TYPE"] = "application/x-www-form-urlencoded"
+    g["FORM_COMPLEX_TYPE"] = "multipart/form-data; boundary=%s" % BOUNDARY 
+
+set_boundary(uuid4().hex)
 
 def basic_auth(user, password):
     if user and password:
@@ -296,7 +300,7 @@ def generate_post(header, payload):
             raise Exception("payload value: str or unicode or fileobject") 
     if has_file: 
         header["Content-Type"] = FORM_COMPLEX_TYPE 
-        return generate_complex_post(payload) 
+        return "".join(generate_complex_post(payload))
     else:
         header["Content-Type"] = FORM_SIMPLE_TYPE 
         cl = generate_simple_post(payload) 
@@ -950,7 +954,7 @@ def connect_proxy(sock, remote, proxy):
     scheme = proxyd["scheme"]
     if scheme in "https": 
         proxy_type = "http"
-        sock.connect((proxyd["host"], proxyd["port"])) 
+        sock.connect((proxyd["host"], int(proxyd["port"])))
     elif scheme == "socks5": 
         proxy_type = "socks5"
         connect_sock5(sock, remote, (proxyd["host"], int(proxyd["port"]))) 

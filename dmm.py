@@ -242,6 +242,8 @@ if __name__ == "__main__":
     parser.add_argument("-c", type=str, help="dvd or digital") 
     parser.add_argument("-d", type=str, help="user url")
     parser.add_argument("-p", type=str, help="proxy") 
+    parser.add_argument("-digital", type=str, help="url type digital") 
+    parser.add_argument("-dvd", type=str, help="url type dvd") 
     args = parser.parse_args()
     proxy = args.p
     if args.c:
@@ -251,5 +253,8 @@ if __name__ == "__main__":
             get_categroy_digital()
     if args.d: 
         if args.d.startswith("http://"):
-            down_list_dvd(args.d)
+            if args.digital:
+                down_list_digital(args.d)
+            else:
+                down_list_dvd(args.d)
 

@@ -90,7 +90,7 @@ def download_by_id(songid):
     try:
         link = get_songlink(songid)[0] 
     except IndexError: 
-        print "skip", v[0] 
+        print "skip", songid
         return
     if os.path.exists(link[0]+".mp3"):
         return
