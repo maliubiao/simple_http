@@ -45,8 +45,14 @@ def down_one(title, url):
         except socket.timeout:
             continue
         if h["status"] != 200:
-            if h["status"] == 302:
-                h, c = simple_http.get(h["Location"], proxy=proxy)
+            if h["status"] == 302: 
+                location = h["Location"]
+                if not location.startswith("http"): 
+                    url = {}
+                    url["host"] = simple_http.urlparse(v.attrib["src"])["host"]
+                    url["path"] = location
+                    location = simple_http.generate_url(url)
+                h, c = simple_http.get(location, proxy=proxy) 
                 if h["status"] != 200:
                     pdb.set_trace()
         f = open(name, "w+")
@@ -61,9 +67,7 @@ def down_one(title, url):
             pdb.set_trace()
         f = open(name, "w+")
         f.write(c)
-        f.close()
-
-
+        f.close() 
 
 def down_page(tid, pid): 
     h, c = simple_http.get(thread_base % (tid, pid), proxy=proxy)

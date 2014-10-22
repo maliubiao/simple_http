@@ -756,6 +756,7 @@ def common_get(url, **kwargs):
     return send_http(remote, use_ssl, body, 
             kwargs.get("timeout", default_timeout),
             proxy, kwargs.get("header_only", False))
+            
 
 
 def put(url, **kwargs):
@@ -815,7 +816,8 @@ def general_post(url, **kwargs):
     body = "".join(request_list)
     remote = (host, port) 
     return send_http(remote, use_ssl, body, 
-            kwargs.get("timeout", default_timeout), proxy, False) 
+            kwargs.get("timeout", default_timeout),
+            proxy, False)
 
 def handle_chunked(cbuf, normal_stream): 
     end = cbuf.tell()
@@ -869,10 +871,7 @@ def wait_response(remote, header_only=False):
     hbuf = cStringIO.StringIO()
     cbuf = cStringIO.StringIO() 
     while True: 
-        try:
-            data = remote.recv(40960) 
-        except socket.error: 
-            raise 
+        data = remote.recv(40960) 
         #remote closed
         if not data:
             break 
@@ -927,6 +926,8 @@ def wait_response(remote, header_only=False):
                 length_unkown and
                 not chunked): 
             break 
+    if not header:
+        raise socket.error("remote error: %s:%d" % remote.getpeername())
     return header, cbuf.getvalue() 
 
 
@@ -964,22 +965,18 @@ def connect_proxy(sock, remote, proxy):
 
 
 def send_http(remote, use_ssl, message, timeout, proxy=None, header_only=False): 
-    try: 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
-        sock.settimeout(timeout)
-        #if there is a proxy , connect proxy server instead 
-        proxy_type = None 
-        if proxy:
-            proxy_type = connect_proxy(sock, remote, proxy)
-        else:
-            sock.connect(remote) 
-        if use_ssl and proxy_type != "http":
-            sock = ssl.wrap_socket(sock) 
-        sock.send(message) 
-        header, body = wait_response(sock, header_only)
-    except socket.error:
-        sock.close() 
-        raise 
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
+    sock.settimeout(timeout)
+    #if there is a proxy , connect proxy server instead 
+    proxy_type = None 
+    if proxy:
+        proxy_type = connect_proxy(sock, remote, proxy)
+    else:
+        sock.connect(remote) 
+    if use_ssl and proxy_type != "http":
+        sock = ssl.wrap_socket(sock) 
+    sock.send(message) 
+    header, body = wait_response(sock, header_only) 
     #handle compressed stream: gzip, deflate 
     if not header_only and header: 
         #maybe gzip stream
