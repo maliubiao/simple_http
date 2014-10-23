@@ -21,16 +21,16 @@ thread = {
         "comic": "231",
         "asia_soft_redir": "58",
         "asia_hard_redir": "25",
-        "western": "77",
+        "western_redir": "77",
         "comic_redir": "27" 
         } 
 
 def down_one(title, url):
     h, c = simple_http.get(url, proxy=proxy)
     if not h:
-        pdb.set_trace()
+        return
     if h["status"] != 200:
-        pdb.set_trace()
+        return
     t = etree.HTML(c)
     pics = t.xpath(image_xpath)
     torrent = [x for x in t.xpath(torrent_xpath) if x.attrib["href"].startswith("attach")] 
@@ -44,6 +44,8 @@ def down_one(title, url):
             h, c = simple_http.get(v.attrib["src"], proxy=proxy) 
         except socket.timeout:
             continue
+        except socket.error:
+            continue
         if h["status"] != 200:
             if h["status"] == 302: 
                 location = h["Location"]
@@ -54,25 +56,33 @@ def down_one(title, url):
                     location = simple_http.generate_url(url)
                 h, c = simple_http.get(location, proxy=proxy) 
                 if h["status"] != 200:
-                    pdb.set_trace()
-        f = open(name, "w+")
+                    continue
+        if len(c) < 10240:
+            continue
+        try:
+            f = open(name.decode("utf-8"), "w+")
+        except IOError:
+            continue
         f.write(c)
         f.close()
     for i,v in enumerate(torrent):
-        name = ("%s-%d.torrent" % (title, i)).replace("/", "-")
+        name = ("%s-%d.torrent" % (title, i)).replace("/", "-") 
         if os.path.exists(name):
             continue
         h, c = simple_http.get(base+v.attrib["href"], proxy=proxy)
         if h["status"] != 200:
-            pdb.set_trace()
-        f = open(name, "w+")
+            continue
+        try:
+            f = open(name.decode("utf-8"), "w+")
+        except IOError:
+            continue
         f.write(c)
         f.close() 
 
 def down_page(tid, pid): 
     h, c = simple_http.get(thread_base % (tid, pid), proxy=proxy)
     if h["status"] != 200:
-        pdb.set_trace()
+        return
     t = etree.HTML(c) 
     url = []
     if pid == 1:
