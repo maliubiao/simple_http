@@ -8,7 +8,7 @@ def down(url, output, proxy=""):
     if h["status"] != 200:
         pprint.pprint(h)
         exit(1)
-    f = open(output, "w+")
+    f = open(output, "wb+")
     f.write(c)
     f.close()
 

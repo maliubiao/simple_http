@@ -60,8 +60,9 @@ def down_one(title, url):
         if len(c) < 10240:
             continue
         try:
-            f = open(name.decode("utf-8"), "w+")
-        except IOError:
+            f = open(name.decode("utf-8"), "wb+")
+        except IOError as e:
+            print e
             continue
         f.write(c)
         f.close()
@@ -73,11 +74,13 @@ def down_one(title, url):
         if h["status"] != 200:
             continue
         try:
-            f = open(name.decode("utf-8"), "w+")
-        except IOError:
+            f = open(name.decode("utf-8"), "wb+")
+        except IOError as e:
+            print e
             continue
         f.write(c)
         f.close() 
+
 
 def down_page(tid, pid): 
     h, c = simple_http.get(thread_base % (tid, pid), proxy=proxy)

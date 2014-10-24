@@ -65,7 +65,7 @@ def download_link(name, link):
             h, c = simple_http.get(h["Location"], header=simple_http.download_header)
             if h["status"] != 200:
                 pdb.set_trace() 
-    f = open(name, "w+")
+    f = open(name, "wb+")
     f.write(c)
     f.close() 
 

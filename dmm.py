@@ -216,9 +216,9 @@ def down_pic(name, pic_url):
         print "skip", pic_url
         return
     try:
-        f = open(name, "w+") 
+        f = open(name, "wb+") 
     except IOError:
-        f = open(name.split("-")[-1], "w+")
+        f = open(name.split("-")[-1], "wb+")
     f.write(c)
     f.close() 
 
