@@ -240,7 +240,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
             description="dmm downloader") 
     parser.add_argument("-c", type=str, help="dvd or digital") 
-    parser.add_argument("-d", type=str, help="user url")
     parser.add_argument("-p", type=str, help="proxy") 
     parser.add_argument("-digital", type=str, help="url type digital") 
     parser.add_argument("-dvd", type=str, help="url type dvd") 
@@ -250,11 +249,9 @@ if __name__ == "__main__":
         if args.c == "dvd":
             get_category_dvd()
         elif args.c == "digital":
-            get_categroy_digital()
-    if args.d: 
-        if args.d.startswith("http://"):
-            if args.digital:
-                down_list_digital(args.d)
-            else:
-                down_list_dvd(args.d)
+            get_categroy_digital() 
+    if args.digital:
+        down_list_digital(args.digital)
+    else:
+        down_list_dvd(args.dvd)
 
