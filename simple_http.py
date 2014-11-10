@@ -521,7 +521,7 @@ def generate_cookie(simple_cookie_dict):
     for k,v in simple_cookie_dict.items():
         if isinstance(k, unicode) or isinstance(v, unicode):
             has_unicode = True
-        ret.append("%s=%s; " % (k,v)) 
+        ret.append("%s=%s; " % (quote_plus(k),quote_plus(v))) 
     if has_unicode:
         return "".join(ret)[:-2].encode("utf-8")
     else:
@@ -532,7 +532,7 @@ def parse_cookie(simple_cookie):
     cookie_dict = {} 
     for cookie in simple_cookie.split(";"):
         kv = cookie.split("=")
-        cookie_dict[kv[0].strip()] = kv[1].strip()
+        cookie_dict[unquote_plus(kv[0].strip())] = unquote_plus(kv[1].strip())
     return cookie_dict
 
 
@@ -550,19 +550,19 @@ def generate_setcookie(cookie_list):
     return "".join(ret)[:-2]
 
 
-def parse_setcookie(string):
+def parse_setcookie(string): 
     cookie_list = [] 
     for line in string.split("\r\n"):
         cookie = {}
         lines = line.split(";")
-        cookie["cookie"] = lines[0]
+        cookie["cookie"] = unquote_plus(lines[0])
         for part in lines[1:]: 
             kv = part.split("=")
-            #path=/ or httponly
+            #path=/ or httponly 
             if len(kv) == 2 : 
-                cookie[kv[0]] = kv[1]
+                cookie[unquote_plus(kv[0])] = unquote_plus(kv[1])
             else: 
-                cookie[kv[0]] = True
+                cookie[unquote_plus(kv[0])] = True
         cookie_list.append(cookie)
     return cookie_list
 

@@ -87,6 +87,8 @@ def get_author_list(category):
 
 
 def get_work_list(author_url):
+    if not author_url:
+        pdb.set_trace()
     h, c = simple_http.get(author_url, proxy=proxy) 
     if h["status"] != 200:
         pdb.set_trace()
@@ -241,8 +243,8 @@ if __name__ == "__main__":
             description="dmm downloader") 
     parser.add_argument("-c", type=str, help="dvd or digital") 
     parser.add_argument("-p", type=str, help="proxy") 
-    parser.add_argument("-digital", type=str, help="url type digital") 
-    parser.add_argument("-dvd", type=str, help="url type dvd") 
+    parser.add_argument("-x", type=str, help="url type digital") 
+    parser.add_argument("-w", type=str, help="url type dvd") 
     args = parser.parse_args()
     proxy = args.p
     if args.c:
@@ -250,8 +252,8 @@ if __name__ == "__main__":
             get_category_dvd()
         elif args.c == "digital":
             get_categroy_digital() 
-    if args.digital:
-        down_list_digital(args.digital)
-    else:
-        down_list_dvd(args.dvd)
+    if args.x:
+        down_list_digital(args.x)
+    if args.w:
+        down_list_dvd(args.w)
 
