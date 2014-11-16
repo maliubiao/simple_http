@@ -6,6 +6,7 @@ import os.path
 from collections import OrderedDict
 import argparse
 import socket
+import re
 
 from lxml import etree 
 
@@ -25,7 +26,7 @@ def get_songlink(songid):
         ret.append((i["songName"], i["songLink"])) 
     return ret
 
-def get_songlinks(songs):
+def get_songlinks(songs): 
     ret = []
     groups = [] 
     ng = len(songs) / LIMIT
@@ -37,8 +38,10 @@ def get_songlinks(songs):
         ret.extend(get_songlink(g))
     return ret
 
+ID_PATTERN = re.compile("/song/([0-9]{1,10})")
+
 def get_songids(uid): 
-    ret = []
+    ret = [] 
     for i in range(0xffff):
         query = {
                 "start": str(i * 25),
@@ -50,12 +53,13 @@ def get_songids(uid):
             break
         t = json.loads(c)["data"]["html"] 
         tree = etree.HTML(t)
-        result = [x for x in tree.xpath(SONGID_XPATH)]
+        result = [x for x in tree.xpath(SONGID_XPATH)] 
         if not result:
             break 
         for i in result:
             if not "class" in i.attrib:
-                ret.append((i.attrib["title"], i.attrib["href"].split("#")[0]))
+                ret.append((i.attrib["title"],
+                    ID_PATTERN.match(i.attrib["href"]).groups()[0])) 
     return ret
 
 def download_link(name, link): 
@@ -112,7 +116,7 @@ def download_author(uid):
     for k,v in jobs:
         if not k in dup:
             dup[k] = v
-    jobs = dup
+    jobs = dup 
     for i,v in enumerate(jobs.items()): 
         link = download_by_id(v[1].strip("/song/"))
         if not link:
@@ -135,7 +139,7 @@ if __name__ == "__main__":
         else:
             msg = "failed: %s\n%s"
         print msg % (link[0], link[1])
-    elif args.a:
+    elif args.a: 
         download_author(args.a)
     elif args.b:
         download_album(args.b)
