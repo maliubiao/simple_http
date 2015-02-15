@@ -35,15 +35,19 @@ def _match_one(tree, nodes, selector):
             line = node.sourceline
             if line >= smin and line <= smax:
                 elements.append(node)
+    elif selector.startswith(","):
+        elements.extend(tree.xpath(selector[1:]))
     else:
         for node in nodes:
             if selector == node.tag:
                 elements.append(node)
     return elements 
 
+
 def get_xpath(node): 
     return node.getroottree().getpath(node)
  
+
 def query_element(tree, selector): 
     elements = []
     nodes = [] 
@@ -63,6 +67,8 @@ def toutf8(s):
         return s.encode("utf-8")
     return s
 
+
+
 def dump_node(node):   
     print "tag: %s\n, line: %d\n, attrib: %s\n, text: %s\n, xpath: %s" % (
             toutf8(node.tag), node.sourceline, str(node.attrib), toutf8(node.text), get_xpath(node))
@@ -72,7 +78,8 @@ def dump_node(node):
 def main(): 
     if len(sys.argv) < 3:
         print "usage etree_utils.py htmlfile selector"
-        exit(0)
+        exit(0) 
+    arg1 = sys.argv[1] 
     f = open(sys.argv[1], 'r')
     s = etree.HTML(f.read())
     f.close() 
