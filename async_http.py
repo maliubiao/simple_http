@@ -13,8 +13,7 @@ import pdb
 import errno 
 import pprint
 import io
-import random
-import syslog
+import random 
 
 from cStringIO import StringIO
 from time import sleep
@@ -141,11 +140,26 @@ config = {
 failed_tasks = { } 
 
 
-def generate_request(url, **kwargs): 
+copy_keys = ("url", "parser", "method")
+
+
+possible_methods = set(("GET", "POST", "HEAD", "PUT", "DELETE")) 
+
+
+def default_copy(task):
+    t = {}
+    for i in copy_keys:
+        if i in task:
+            t[i] = task[i]
+    return t
+
+
+def generate_request(**kwargs): 
+    url = kwargs["url"]
     request_list = []
     urld = urlparse(url) 
-    if kwargs.get("query"):
-        urld["query"] = generate_query(kwargs["query"]) 
+    if kwargs.get("payload"):
+        urld["query"] = generate_query(kwargs["payload"]) 
     if "header" in kwargs:
         if not kwargs["header"]:
             header = default_header.copy()
@@ -176,16 +190,23 @@ def generate_request(url, **kwargs):
             raise Exception("不支持的代理格式") 
     #不处理fragment
     if "fragment" in urld:
-        del urld["fragment"]
+        del urld["fragment"] 
     path = generate_url(urld)
-    method = kwargs.get("method", METHOD_GET) 
+    method = kwargs.get("method", METHOD_GET).upper()
+    if method not in possible_methods:
+        raise ValueError("unsupported method: %s" % method) 
+    if method in ("POST", "PUT"):
+        content = generate_post(header, kwargs["payload"]) 
+        header["Content-Length"] = str(len(content)) 
     request_list.append(generate_client_header(header, method, path))
     if kwargs.get("cookie"):
         request_list.append("Cookie: ")
         request_list.append(generate_cookie(kwargs["cookie"]))
         request_list.append(HEADER_END)
     else:
-        request_list.append("\r\n")
+        request_list.append("\r\n") 
+    if method in ("POST", "PUT"): 
+        request_list.append(content)
     body = "".join(request_list)
     return (host, port), body 
 
@@ -374,13 +395,13 @@ def pool_get(task, remote):
 
 def connect_remote(task): 
     #生成请求，暂时写到发送缓冲 
-    remote, content = generate_request(task["url"],
-            query = task["query"],
-            cookie = task["cookie"],
-            header = task["header"],
-            proxy = task["proxy"]) 
+    remote, content = generate_request(**task) 
     if "remote" in task:
         remote = task["remote"] 
+    if task.get("method", METHOD_GET).lower() == "head":
+        task["header_only"] = True
+    else:
+        task["header_only"] = False
     pool_get(task, remote) 
     task["send"].write(content) 
     task["status"] = STATUS_SEND 
@@ -498,23 +519,20 @@ def parse_response(header, task):
     if buf.tell() >= total_length:
         call_parser(task)
         remove_task(task)
-        return
-    if ((header.get("Connection") == "close" or     
-            header["status"] >= 300 or
-            header["status"] < 200) and
-            length_unknown and not has_chunk):
-        call_parser(task) 
-        remove_task(task) 
-        return
+        return 
     if length_unknown and not has_chunk: 
-        #内存复制问题
-        content = buf.getvalue()
-        entity_end = content.rfind("\r\n\r\n")
-        if entity_end != len(content) - 4:
-            return
-        call_parser(task) 
-        remove_task(task)
-        return
+        try:
+            data = task["con"].recv(4) 
+        except socket.error as e:
+            if e.errno != errno.EINPROGRESS:
+                remove_task(task, why="检查http流结尾时失效") 
+            return 
+        #远端已经关闭, 流结束
+        if not data:
+            call_parser(task) 
+            remove_task(task)
+        else:
+            task["recv"].write(data) 
 
 
 def handle_pollin(task): 
@@ -562,6 +580,10 @@ def handle_pollin(task):
         except (ValueError, IndexError, TypeError) as e: 
             remove_task(task, why="解析http头失败: %s" % e)
             return 
+        if task["header_only"]:
+            call_parser(task)
+            remove_task(task)
+            return
     if task["status"] & STATUS_HEADER: 
         try:
             parse_response(task["resp_header"], task)
@@ -733,8 +755,7 @@ def fill_task(task):
     task["recv"] = StringIO() 
     copy = {
         "proxy": "",
-        "cookie": "",
-        "query": {},
+        "cookie": "", 
         "url": "",
         "header": {}, 
         "random": "",
@@ -752,9 +773,7 @@ def fill_task(task):
             task[k] = v
 
 
-
 def dispatch_tasks(task_list): 
-    syslog.openlog("async_http")
     g["ep"] = epoll() 
     #补全任务缺少的
     for i in task_list: 
@@ -762,7 +781,6 @@ def dispatch_tasks(task_list):
     #初始化任务管理 
     space = config["limit"]
     for i in task_list: 
-        syslog.syslog(syslog.LOG_INFO, "dispatch_tasks: %s" % i["url"])
         while True:
             random = get_random() 
             if not random in tasks:
@@ -777,11 +795,10 @@ def dispatch_tasks(task_list):
                 continue
             space -= 1 
     run_async(ep) 
-    syslog.closelog() 
 
 
 
-def loop_until_done(task_list, copy_task):
+def loop_until_done(task_list):
     global failed_tasks
     dispatch_tasks(task_list) 
     while len(failed_tasks):
@@ -792,16 +809,17 @@ def loop_until_done(task_list, copy_task):
             if v["retry"] > config["retry_limit"]:
                 del failed_tasks[key]
                 continue
-            t = copy_task(v) 
+            t = default_copy(v)
             v["retry"] += 1
             ret.append(t)
         dispatch_tasks(ret) 
 
 
 
-def insert_task(task): 
-    syslog.syslog(syslog.LOG_INFO, "insert_task: %s" % task["url"])
-    fill_task(task) 
+
+def insert_task(task):
+    task = default_copy(task)
+    fill_task(task)
     while True:
         random = get_random()
         if random not in tasks: 
