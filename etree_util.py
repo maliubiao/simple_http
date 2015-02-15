@@ -55,6 +55,8 @@ def query_element(tree, selector):
     else:
         elements.extend(_match_one(tree, nodes, selector))
     return elements
+
+
        
 def toutf8(s):
     if isinstance(s, unicode):
@@ -64,6 +66,8 @@ def toutf8(s):
 def dump_node(node):   
     print "tag: %s\n, line: %d\n, attrib: %s\n, text: %s\n, xpath: %s" % (
             toutf8(node.tag), node.sourceline, str(node.attrib), toutf8(node.text), get_xpath(node))
+
+
 
 def main(): 
     if len(sys.argv) < 3:

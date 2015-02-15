@@ -90,7 +90,7 @@ def common_get(url, **kwargs):
         request_list.append("\r\n") 
     #args for send_http
     body = "".join(request_list)       
-    remote = (host, port) 
+    remote = kwargs.get("remote", (host, port)) 
     return send_http(remote, use_ssl, body, 
             kwargs.get("timeout", default_timeout),
             proxy, kwargs.get("header_only", False))
@@ -130,7 +130,7 @@ def general_post(url, **kwargs):
         port = int(urld["port"])
         del urld["port"] 
     path = generate_url(urld) 
-    method= kwargs.get("method", METHOD_GET) 
+    method= kwargs.get("method", METHOD_POST) 
     if "header" not in kwargs:
         header = default_header.copy() 
     else:
@@ -152,7 +152,7 @@ def general_post(url, **kwargs):
         request_list.append("\r\n")
     request_list.append(content) 
     body = "".join(request_list)
-    remote = (host, port) 
+    remote = kwargs.get("remote", (host, port)) 
     return send_http(remote, use_ssl, body, 
             kwargs.get("timeout", default_timeout),
             proxy, False)
