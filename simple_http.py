@@ -20,22 +20,28 @@ from collections import OrderedDict
 
 
 def get(url, **kwargs):
-    return common_get(url, method=METHOD_GET, **kwargs)
+    return common_request(url, method=METHOD_GET, **kwargs)
 
 def head(url, **kwargs):
-    return common_get(url, method=METHOD_HEAD, header_only=True, **kwargs)
+    return common_request(url, method=METHOD_HEAD, header_only=True, **kwargs)
 
 def delete(url, **kwargs):
-    return common_get(url, method=METHOD_DELETE, **kwargs) 
+    return common_request(url, method=METHOD_DELETE, **kwargs) 
 
 def trace(url, **kwargs):
-    return common_get(url, method=METHOD_TRACE, **kwargs)
+    return common_request(url, method=METHOD_TRACE, **kwargs)
 
 def options(url, **kwargs):
-    return common_get(url, method=METHOD_OPTIONS, **kwargs)
+    return common_request(url, method=METHOD_OPTIONS, **kwargs)
+
+def put(url, **kwargs):
+    return common_request(url, method=METHOD_PUT, **kwargs)
+
+def post(url, **kwargs):
+    return common_request(url, method=METHOD_POST, **kwargs) 
 
 
-def common_get(url, **kwargs): 
+def common_request(url, **kwargs): 
     request_list = [] 
     urld = urlparse(url) 
     #http basic authorization 
@@ -69,10 +75,13 @@ def common_get(url, **kwargs):
         header = default_header.copy() 
     else:
         header = kwargs["header"]
-    if port != 80:
+    if not port in (80, 443):
         header["Host"] = "%s:%d" % (host, port) 
     else:
-        header["Host"] = host
+        header["Host"] = host 
+    if kwargs.get("method") in (METHOD_PUT, METHOD_POST): 
+        content = generate_post(header, kwargs["payload"]) 
+        header["Content-Length"] = str(len(content)) 
     #reuqest path
     path = generate_url(urld) 
     method= kwargs.get("method", METHOD_GET) 
@@ -88,74 +97,16 @@ def common_get(url, **kwargs):
         request_list.append(HEADER_END) 
     else:
         request_list.append("\r\n") 
+    if kwargs.get("method") in (METHOD_PUT, METHOD_POST):
+        request_list.append(content)
     #args for send_http
     body = "".join(request_list)       
     remote = kwargs.get("remote", (host, port)) 
     return send_http(remote, use_ssl, body, 
             kwargs.get("timeout", default_timeout),
             proxy, kwargs.get("header_only", False))
+
             
-
-
-def put(url, **kwargs):
-    return general_post(url, method=METHOD_PUT, **kwargs)
-
-def post(url, **kwargs):
-    return general_post(url, method=METHOD_POST, **kwargs) 
-
-def general_post(url, **kwargs): 
-    request_list = []
-    use_ssl = False 
-    urld = urlparse(url) 
-    #http basic authorization 
-    basicauth =basic_auth(urld.get("user"), urld.get("password")) 
-    if "user" in urld:
-        del urld["user"]
-    if "password" in urld:
-        del urld["password"] 
-    proxy = kwargs.get("proxy")
-    if proxy:
-        pauth = proxy_auth(proxy)
-    else:
-        pauth = None
-    #generate path 
-    use_ssl, port = get_scheme(urld) 
-    proxy = kwargs.get("proxy")
-    if not pauth:
-        host = urld["host"]
-        del urld["host"]
-    if "scheme" in urld:
-        del urld["scheme"]
-    if "port" in urld: 
-        port = int(urld["port"])
-        del urld["port"] 
-    path = generate_url(urld) 
-    method= kwargs.get("method", METHOD_POST) 
-    if "header" not in kwargs:
-        header = default_header.copy() 
-    else:
-        header = kwargs["header"] 
-    header["Host"] = "%s:%d" % (host, port) 
-    content = generate_post(header, kwargs["payload"]) 
-    header["Content-Length"] = str(len(content)) 
-    #mangle header for basic authorization
-    if basicauth: header["Authorization"] = basicauth 
-    #mangle header for basic proxy authorization
-    if pauth: header["Proxy-Authorization"] = pauth 
-    request_list.append(generate_client_header(header, method, path)) 
-    #generate cookie and HEADER_END
-    if "cookie" in kwargs:
-        request_list.append("Cookie: ")    
-        request_list.append(generate_cookie(kwargs["cookie"])) 
-        request_list.append(HEADER_END) 
-    else:
-        request_list.append("\r\n")
-    request_list.append(content) 
-    body = "".join(request_list)
-    remote = kwargs.get("remote", (host, port)) 
-    return send_http(remote, use_ssl, body, 
-            kwargs.get("timeout", default_timeout),
-            proxy, False)
 
 def handle_chunked(cbuf, normal_stream): 
     end = cbuf.tell()
@@ -197,6 +148,7 @@ def wait_header(data, hbuf):
         hbuf.close() 
     header = parse_server_header(data[:hend]) 
     return header, data[hend+4:] 
+
 
 
 def wait_response(remote, header_only=False):
@@ -243,34 +195,20 @@ def wait_response(remote, header_only=False):
         #handle chunked data
         if chunked:
             chunked_end = data.rfind("0\r\n\r\n")
-            if chunked_end > -1: 
-                cbuf.getvalue() 
-                normal = cStringIO.StringIO()
-                handle_chunked(cbuf, normal) 
-                cbuf.close() 
-                return header, normal.getvalue() 
-        #no more data 
-        status = header["status"]
-        if ((header.get("Connection") == "close" or
-                status >= 300 or
-                status < 200 or
-                status == 204) and
-                length_unkown and
-                not chunked): 
-            entity_end = data.rfind(HEADER_END)
-            if entity_end == (len(data) -4): 
-                break 
+            if chunked_end < 0 or data[chunked_end-1].isdigit(): 
+                continue
+            cbuf.getvalue() 
+            normal = cStringIO.StringIO()
+            handle_chunked(cbuf, normal) 
+            cbuf.close() 
+            return header, normal.getvalue() 
         #Content-Length
         if cbuf.tell() >= total_length: 
             break 
-        #if we don't know the end, assume HEADER_END
-        if length_unkown and not chunked:
-            entity_end = data.rfind(HEADER_END)
-            if entity_end == (len(data) -4): 
-                break 
     if not header:
         raise socket.error("remote error: %s:%d" % remote.getpeername())
     return header, cbuf.getvalue() 
+
 
 
 def connect_sock5(sock, remote, server): 
@@ -289,6 +227,8 @@ def connect_sock5(sock, remote, server):
     if not sock.recv(12).startswith("\x05\x00"): 
         sock.close()
         raise socket.error("proxy network error")
+
+
 
 
 def connect_proxy(sock, remote, proxy): 
@@ -354,6 +294,7 @@ def session_pool(remote):
     else:
         sock = connect(remote)
     return sock
+
 
 
 def send_http(remote, use_ssl, message, timeout, proxy=None, header_only=False): 

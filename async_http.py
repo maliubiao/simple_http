@@ -32,31 +32,6 @@ def random_header():
     return h 
 
 
-default_header = {
-        "Connection": "keep-alive",
-        "Cache-Control": "no-cache",
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:25.0) Gecko/20100101 Firefox/32.0)"
-        } 
-
-html_header = {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "zh,zh-cn;q=0.8,en-us;q=0.5,en;q=0.3", 
-        "Connection": "keep-alive",
-        "Cache-Control": "no-cache", 
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:25.0) Gecko/20100101 Firefox/32.0)" 
-        }
-
-
-json_header = {
-        "Accept": "application/json,text/javascript,*/*;q=0.01", 
-        "Accept-Language": "zh,zh-cn;q=0.8,en-us;q=0.5,en;q=0.3", 
-        "Connection": "keep-alive",
-        "Cache-Control": "no-cache",
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:25.0) Gecko/20100101 Firefox/32.0)",
-        "X-Requested-With": "XMLHttpRequest" 
-        } 
-
-
 
 def genua_firefox(): 
     v = random.choice(b_ver["firefox"]) 
@@ -125,14 +100,14 @@ running = {}
 
 g = globals() 
 
-debug = True
+debug = False
 
 
 config = {
-        "limit": 2000, 
+        "limit": 20, 
         "timeout": 30,
-        "interval": 5,
-        "retry": False,
+        "interval": 1,
+        "retry": True,
         "retry_limit": 3
         } 
 
@@ -158,8 +133,8 @@ def generate_request(**kwargs):
     url = kwargs["url"]
     request_list = []
     urld = urlparse(url) 
-    if kwargs.get("payload"):
-        urld["query"] = generate_query(kwargs["payload"]) 
+    if kwargs.get("query"):
+        urld["query"] = generate_query(kwargs["query"]) 
     if "header" in kwargs:
         if not kwargs["header"]:
             header = default_header.copy()
@@ -174,7 +149,7 @@ def generate_request(**kwargs):
     else:
         port = 80 
         header["Host"] = host
-    #没代理发相对遣返
+    #没代理
     if not kwargs.get("proxy"): 
         del urld["scheme"] 
         del urld["host"]
@@ -395,7 +370,10 @@ def pool_get(task, remote):
 
 def connect_remote(task): 
     #生成请求，暂时写到发送缓冲 
-    remote, content = generate_request(**task) 
+    try:
+        remote, content = generate_request(**task) 
+    except KeyError:
+        pdb.set_trace()
     if "remote" in task:
         remote = task["remote"] 
     if task.get("method", METHOD_GET).lower() == "head":
@@ -476,8 +454,21 @@ def handle_chunked(cbuf, normal_stream):
         normal_stream.write(chunk) 
 
 
+
 def call_parser(task): 
-    task["parser"](task) 
+    enc =  task["resp_header"].get("Content-Encoding") 
+    text = task["recv"].getvalue()
+    if enc == "gzip": 
+        task["recv"].truncate(0)
+        task["recv"].write(zlib.decompress(text, 16+zlib.MAX_WBITS))
+    elif enc == "deflate":
+        task["recv"].truncate(0) 
+        task["recv"].write(zlib.decompress(text, -zlib.MAX_WBITS)) 
+    try:
+        task["parser"](task) 
+    except:
+        traceback.print_exc()
+
 
 
 
@@ -501,9 +492,7 @@ def parse_response(header, task):
         #内存复制问题
         content = buf.getvalue()
         chunk_end = content.rfind("0\r\n\r\n") 
-        if chunk_end < 0:
-            return 
-        if content[chunk_end-1].isdigit():
+        if chunk_end < 0 or content[chunk_end-1].isdigit():
             return
         normal = StringIO()
         try:
@@ -539,27 +528,13 @@ def handle_pollin(task):
     con = task["con"]
     recv_buffer = task["recv"] 
     #如果连接被异常终止 
-    try: 
-        mark = recv_buffer.tell()
-        recv_buffer.write(con.recv(4))
-    except socket.error as e: 
-        remove_task(task, why="pollin检查结尾: %s" % e)
-        return 
-    except ValueError: 
-        remove_task(task, why="pollin检查结尾时buffer失效")
-        return 
+    mark = recv_buffer.tell()
+    recv_buffer.write(con.recv(4)) 
     #连接的正常终止
     if recv_buffer.tell() == mark:
         remove_task(task)
         return 
-    try:
-        read_to_buffer(con, recv_buffer)
-    except socket.error as e: 
-        remove_task(task, why="pollin读出数据失败: %s" % e) 
-        return
-    except ValueError: 
-        remove_task(task, why="pollin读出数据失败buffer失效") 
-        return 
+    read_to_buffer(con, recv_buffer) 
     #通知streamer
     if task["streamer"]:
         mark = recv_buffer.tell()

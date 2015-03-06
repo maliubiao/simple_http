@@ -81,7 +81,7 @@ for x in string.letters:
 
 default_header = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Encoding": "gzip, deflate",
+        #"Accept-Encoding": "gzip, deflate",
         "Accept-Language": "zh,zh-cn;q=0.8,en-us;q=0.5,en;q=0.3", 
         "Connection": "keep-alive",
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:25.0) Gecko/20100101 Firefox/32.0"
@@ -91,6 +91,27 @@ download_header = {
         "Accept": "*/*",
         "Connection": "Keep-Alive"
         }
+
+
+html_header = {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh,zh-cn;q=0.8,en-us;q=0.5,en;q=0.3", 
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache", 
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:25.0) Gecko/20100101 Firefox/32.0)" 
+        }
+
+
+json_header = {
+        "Accept": "application/json,text/javascript,*/*;q=0.01", 
+        "Accept-Language": "zh,zh-cn;q=0.8,en-us;q=0.5,en;q=0.3", 
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:25.0) Gecko/20100101 Firefox/32.0)",
+        "X-Requested-With": "XMLHttpRequest" 
+        } 
+
+
 
 #common mimetypes
 common_types = {
