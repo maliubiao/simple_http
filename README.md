@@ -127,59 +127,18 @@ Out[46]:
   'status': 301},
  None,
  '<HTML><HEAD><meta http-equiv="content-type" content="text/html;charset=utf-8">\n<TITLE>301 Moved</TITLE></HEAD><BODY>\n<H1>301 Moved</H1>\nThe document has moved\n<A HREF="https://www.google.com/">here</A>.\r\n</BODY></HTML>\r\n')
-``` 
-###pretty.py是格式化HTML的工具, 它并不处理js与css, 主要为了澄清文档结构
-```shell
-python pretty.py input.html > ouput.html
-``` 
+```
+
 ##etree_utils.py是用于快速确定xpath的工具
-因为浏览器会动态修改DOM，从源代码界面取得xpath经常不能用.    
-常见的Beautifulsoup效率非常低, 又经常有些奇怪的bug, lxml配合xpath才是抓取网页内容的最佳方案   
+lxml配合xpath是解析网页内容的最佳方案   
+因为浏览器会动态修改DOM，从节点树取得xpath经常不能用.    
 主要是辅助快速确定目标的xpath, 使用语法是  
+#python file selector
 1. a 指tag选择器  
-2. .ele 是类选择器  
-3. #id 是ID选择器  
-4. href="link", =号是属性选择器  
-5. >是行选择器   
-###示例
-```shell
-python etree_util.py htmlfile 语法
-
-tag: a
-, line: 379
-, attrib: {'href': '/album/120712490', 'title': u'\xe8\x9d\xb6\xe6\x81\x8b\xe8\x8a\xb1'}
-, text: 目标
-, xpath: /html/body/div/ul/li[25]/div/span[6]/a
-===============
-tag: a
-, line: 385
-, attrib: {'href': 'javascript:;', 'class': 'btn btn-b play-selected-hook'}
-, text: 
-        
-, xpath: /html/body/div/div[2]/a[1]
-===============
-tag: a
-, line: 394
-, attrib: {'href': 'javascript:;', 'class': 'btn btn-b add-selected-hook'}
-, text: 
-        
-, xpath: /html/body/div/div[2]/a[2]
-===============
-tag: a
-, line: 403
-, attrib: {'href': 'javascript:;', 'class': 'btn btn-b collect-selected-hook'}
-, text: 
-        
-, xpath: /html/body/div/div[2]/a[3]
-===============
-tag: a
-, line: 412
-, attrib: {'href': 'javascript:;', 'class': 'btn btn-b down-selected-hook'}
-, text: 
-        
-, xpath: /html/body/div/div[2]/a[4]
-
-``` 
+2. .attrib-value 是属性选择器  
+3. -value 是节点text选择器
+4. >是行选择器   
+value是正则表达式 
 
 
 ##encryped_client/server是SOCKS5转发代理 
@@ -189,11 +148,7 @@ tag: a
 4. 加密机制是随机密码表, 转换效率非常高
 5. encrypted_server.py与key放到墙外, encrypted_client.py与key放到本地 
 
-##http流解析
-主要是为了测试客户端与服务端, 将网络流DUMP到文件，再解析
-```shell
-python http_stream_parser.py stream.file
-```
+
 
 ##http模拟器, 多进程并发模拟浏览器操作
 ```shell 

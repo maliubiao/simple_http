@@ -1,42 +1,48 @@
+#! /usr/bin/env python
+#-*-encoding=utf-8-*-
+
 import re 
 import sys 
 from lxml import etree 
+import pdb
 
 def _match_one(tree, nodes, selector):
     elements = [] 
-    if selector.startswith("."):
-        selector = re.compile(selector[1:])
-        for node in nodes: 
-            attrib = node.attrib
-            if "class" in attrib:
-                if selector.match(attrib["class"]):
-                    elements.append(node) 
-    elif selector.startswith("#"):
-        selector = re.compile(selector[1:])
-        for node in nodes:
-            attrib = node.attrib
-            if "id" in attrib: 
-                if selector.match(attrib["id"]):
-                    elements.append(node) 
-    elif "=" in selector:
-        key, value = [x.strip() for x in selector.split("=")]
-        selector = re.compile(value)
-        for node in nodes:
-            attrib = node.attrib
-            if key in attrib: 
-                if selector.match(attrib[key]):
-                    elements.append(node) 
-    elif selector.startswith(">"): 
-        if "-" in selector:
-            smin, smax = [int(x) for x in selector[1:].split("-")]
+    prefix = selector[0]
+    sc = selector[1:]
+    #find by attr
+    if prefix == ".": 
+        parts = sc.split("-")
+        if parts:
+            cat = parts[0]
+            value = "-".join(parts[1:])
         else:
-            smin = smax = int(selector[1:]) 
+            cat = "class",
+            value = sc 
+        selector = re.compile(value)
+        for node in nodes: 
+            v = node.attrib.get(cat, "") 
+            if selector.findall(v):
+                elements.append(node) 
+    #find by line number
+    elif prefix == ">":
+        if "-" in selector:
+            smin, smax = [int(x) for x in sc.split("-")]
+        else:        
+            smin = smax = int(sc)
         for _, node in etree.iterwalk(tree, tag="*", events=("start", )):
             line = node.sourceline
             if line >= smin and line <= smax:
                 elements.append(node)
-    elif selector.startswith(","):
-        elements.extend(tree.xpath(selector[1:]))
+    #find by text
+    elif prefix == "-": 
+        for _, node in etree.iterwalk(tree, tag="*", events=("start", )): 
+            if node.text and re.findall(sc.decode("utf-8"), node.text, re.UNICODE):
+                elements.append(node) 
+    #find by xpath
+    elif prefix == ",":
+        elements.extend(tree.xpath(sc))
+    #find by tag
     else:
         for node in nodes:
             if selector == node.tag:
@@ -48,7 +54,9 @@ def get_xpath(node):
     return node.getroottree().getpath(node)
  
 
-def query_element(tree, selector): 
+
+def query_element(content, selector): 
+    tree = etree.HTML(content) 
     elements = []
     nodes = [] 
     for _, node in etree.iterwalk(tree, tag="*", events=("start", )):
@@ -71,7 +79,7 @@ def toutf8(s):
 
 def dump_node(node):   
     print "tag: %s\n, line: %d\n, attrib: %s\n, text: %s\n, xpath: %s" % (
-            toutf8(node.tag), node.sourceline, str(node.attrib), toutf8(node.text), get_xpath(node))
+            toutf8(node.tag), node.sourceline, str(node.attrib), toutf8(node.text), get_xpath(node)) 
 
 
 
@@ -79,13 +87,16 @@ def main():
     if len(sys.argv) < 3:
         print "usage etree_utils.py htmlfile selector"
         exit(0) 
-    arg1 = sys.argv[1] 
     f = open(sys.argv[1], 'r')
-    s = etree.HTML(f.read())
+    content = f.read()
     f.close() 
-    for i in query_element(s, sys.argv[2]):
+    arg1 = sys.argv[1] 
+    selector = sys.argv[2] 
+    for i in query_element(content, selector):
         print "==============="
-        dump_node(i)
+        dump_node(i) 
+
+
 
 if __name__ == "__main__":
     main()
