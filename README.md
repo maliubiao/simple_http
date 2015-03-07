@@ -132,13 +132,13 @@ Out[46]:
 ##etree_utils.py是用于快速确定xpath的工具
 lxml配合xpath是解析网页内容的最佳方案   
 因为浏览器会动态修改DOM，从节点树取得xpath经常不能用.    
-主要是辅助快速确定目标的xpath, 使用语法是  
-#python file selector
+主要是辅助快速确定目标的xpath
 1. a 指tag选择器  
 2. .attrib-value 是属性选择器  
 3. -value 是节点text选择器
 4. >是行选择器   
-value是正则表达式 
+python file selector
+value可以是正则表达式 
 
 
 ##encryped_client/server是SOCKS5转发代理 
