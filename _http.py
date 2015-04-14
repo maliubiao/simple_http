@@ -78,6 +78,7 @@ letters = [0 for x in range(256)]
 for x in string.letters:
     letters[ord(x)] = 1 
 
+hex_digits_set = set(string.hexdigits) 
 
 default_header = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -216,6 +217,7 @@ default_timeout = 5
 
 HTTP_VERSION = "HTTP/1.1"
 HEADER_END = "\x0d\x0a\x0d\x0a" 
+HEADER_END2 = "\n\n"
 METHOD_GET = "GET"
 METHOD_POST = "POST"
 METHOD_DELETE = "DELETE"

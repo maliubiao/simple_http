@@ -20,28 +20,48 @@ from collections import OrderedDict
 
 
 def get(url, **kwargs):
-    return common_request(url, method=METHOD_GET, **kwargs)
+    return request(url, method=METHOD_GET, **kwargs)
 
 def head(url, **kwargs):
-    return common_request(url, method=METHOD_HEAD, header_only=True, **kwargs)
+    return request(url, method=METHOD_HEAD, header_only=True, **kwargs)
 
 def delete(url, **kwargs):
-    return common_request(url, method=METHOD_DELETE, **kwargs) 
+    return request(url, method=METHOD_DELETE, **kwargs) 
 
 def trace(url, **kwargs):
-    return common_request(url, method=METHOD_TRACE, **kwargs)
+    return request(url, method=METHOD_TRACE, **kwargs)
 
 def options(url, **kwargs):
-    return common_request(url, method=METHOD_OPTIONS, **kwargs)
+    return request(url, method=METHOD_OPTIONS, **kwargs)
 
 def put(url, **kwargs):
-    return common_request(url, method=METHOD_PUT, **kwargs)
+    return request(url, method=METHOD_PUT, **kwargs)
 
 def post(url, **kwargs):
-    return common_request(url, method=METHOD_POST, **kwargs) 
+    return request(url, method=METHOD_POST, **kwargs) 
 
 
-def common_request(url, **kwargs): 
+def request(url, **kwargs): 
+    redirect = kwargs.get("redirect", 1)
+    assert redirect > 0
+    new_url = url 
+    urlset = set()
+    while redirect:
+        redirect = redirect - 1 
+        if new_url in urlset:
+            raise socket.error("endless redirect")
+        header, body = do_request(new_url, **kwargs)
+        urlset.add(url)
+        status = header["status"]
+        if status == 301 or status == 302:
+            new_url = header.get("Location", header.get("location")) 
+        else:
+            break
+        print "redirect to", new_url
+    return header, body 
+
+
+def do_request(url, **kwargs): 
     request_list = [] 
     urld = urlparse(url) 
     #http basic authorization 
@@ -136,18 +156,21 @@ def handle_chunked(cbuf, normal_stream):
 
 
 def wait_header(data, hbuf): 
-    hend = data.find(HEADER_END) 
+    hbuf.write(data)
+    hdr = hbuf.getvalue()
+    skip = 0 
+    hend = hdr.find(HEADER_END) 
     if hend < 0: 
-        #slow network, wait for header 
-        hbuf.write(data) 
-        return None, None
+        hend = hdr.find(HEADER_END2)
+        if hend < 0:
+            #slow network, wait for header 
+            return None, None 
+        else:
+            skip = 2
     else:
-        hbuf.write(data)
-        data = hbuf.getvalue()
-        hend = data.find(HEADER_END)
-        hbuf.close() 
-    header = parse_server_header(data[:hend]) 
-    return header, data[hend+4:] 
+        skip = 4 
+    header = parse_server_header(hdr[:hend]) 
+    return header, hdr[hend+skip:] 
 
 
 

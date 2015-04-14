@@ -14,11 +14,10 @@ import errno
 import pprint
 import io
 import random 
+import time
+import traceback
 
-from cStringIO import StringIO
-from time import sleep
-from time import time
-from select import *
+from cStringIO import StringIO 
 from select import * 
 
 
@@ -85,11 +84,6 @@ def random_useragent():
 
 def nope_parser(body): 
     pass
-
-
-def nope_streamer(task, content):
-    pass
-
 
 
 fd_task = { }
@@ -268,9 +262,9 @@ def set_dns_buffer(hosts):
         else:
             port = 80 
         host = d["host"]
-        start = time()
+        start = time.time()
         ret = socket.getaddrinfo(host, port)
-        cost = time() - start
+        cost = time.time() - start
         if cost > 1:
             print "dns slow query: %s, %s" % (cost, host)
         if not len(ret):
@@ -372,8 +366,9 @@ def connect_remote(task):
     #生成请求，暂时写到发送缓冲 
     try:
         remote, content = generate_request(**task) 
-    except KeyError:
-        pdb.set_trace()
+    except KeyError as e:
+        log_with_time("generate_request error: %s" % e)
+        return 
     if "remote" in task:
         remote = task["remote"] 
     if task.get("method", METHOD_GET).lower() == "head":
@@ -384,7 +379,7 @@ def connect_remote(task):
     task["send"].write(content) 
     task["status"] = STATUS_SEND 
     #设定连接初始化时间 
-    task["start"] = time()
+    task["start"] = time.time()
 
 
 def handle_write_later(task):
@@ -418,16 +413,42 @@ def read_to_buffer(con, buf):
             buf.write(con.recv(409600)) 
             #连接终止退出
             if buf.tell() == mark:
-                break 
+                return True
         except socket.error as e:
             if e.errno == errno.EAGAIN:
-                break
+                return False
             raise e 
 
             
 
-def handle_chunked(cbuf, normal_stream): 
-    #内存复制问题
+
+
+def call_parser(task): 
+    enc =  task["resp_header"].get("Content-Encoding") 
+    text = task["recv"].getvalue() 
+    task["recv"].truncate(0) 
+    task["text"] = text
+    if enc == "gzip": 
+        task["text"] = zlib.decompress(text, 16+zlib.MAX_WBITS)
+    elif enc == "deflate": 
+        task["text"] = zlib.decompress(text, -zlib.MAX_WBITS) 
+    task["parser"](task) 
+
+
+
+def decode_chunked(task): 
+    normal = StringIO()
+    try:
+        convert_chunked(task["recv"], normal) 
+    except Exception as e: 
+        remove_task(task, why="chunked: %s" % e)
+        return 
+    task["recv"].close()
+    task["recv"] = normal 
+
+
+
+def convert_chunked(cbuf, normal_stream): 
     end = cbuf.tell()
     cbuf.seek(0)
     goout = 0
@@ -447,109 +468,107 @@ def handle_chunked(cbuf, normal_stream):
         x = int(num, 16) 
         if not x:
             break
-        chunk = cbuf.read(x)
-        cbuf.seek(2, io.SEEK_CUR)
+        chunk = cbuf.read(x) 
         if len(chunk) != x:
             break
+        cbuf.seek(2, io.SEEK_CUR)
         normal_stream.write(chunk) 
 
 
+def decode_chunk_stream(task):
+    goout = False
+    b = task["chunked_b"]
+    recv = task["recv"]
+    done = False 
+    recv_end = recv.tell() 
+    recv.seek(task["chunked_idx"], io.SEEK_SET) 
+    while True: 
+        back_idx = recv.tell()
+        num = "" 
+        while True: 
+            char = recv.read(1) 
+            if not char:
+                goout = True
+                break 
+            if char == "\r": 
+                break
+            num += char 
+        if goout:
+            break
+        recv.seek(1, io.SEEK_CUR)
+        x = int(num, 16) 
+        if not x:
+            done = True
+            break
+        chunk = recv.read(x) 
+        if len(chunk) != x:
+            recv.seek(back_idx, io.SEEK_SET)
+            break
+        recv.seek(2, io.SEEK_CUR)
+        b.write(chunk) 
+    task["chunked_idx"] = recv.tell()
+    recv.seek(recv_end, io.SEEK_SET)
+    if done: 
+        task["recv"] = task["chunked_b"] 
+        del task["chunked_b"] 
+        del task["chunked_idx"]
+        call_parser(task) 
+        remove_task(task)   
 
-def call_parser(task): 
-    enc =  task["resp_header"].get("Content-Encoding") 
-    text = task["recv"].getvalue()
-    if enc == "gzip": 
-        task["recv"].truncate(0)
-        task["recv"].write(zlib.decompress(text, 16+zlib.MAX_WBITS))
-    elif enc == "deflate":
-        task["recv"].truncate(0) 
-        task["recv"].write(zlib.decompress(text, -zlib.MAX_WBITS)) 
-    try:
-        task["parser"](task) 
-    except:
-        traceback.print_exc()
+    
 
 
+def parse_http_buffer(task): 
+    header = task.get("resp_header")
+    if not header:
+        remove_task(task)
+        return
+    if header.get("Transfer-Encoding") == "chunked":
+        decode_chunked(task)
+    call_parser(task) 
+    remove_task(task)   
+    
 
 
 def parse_response(header, task): 
-    #检测请求是否完成，并调用paser
-    total_length = 0xffffffff
-    has_chunk = False
+    #检测请求是否完成，并调用paser 
+    total_length = 0xffffffff 
     has_range = False
     length_unknown = True 
-    buf = task["recv"]
-    if "Content-Length" in header:
+    if "Content-Length" in header: 
         total_length = int(header["Content-Length"]) 
-        length_unknown = False
-    if header.get("Transfer-Encoding") == "chunked":
-        has_chunk = True
+        length_unknown = False 
     if header.get("Accept-Ranges") == "bytes":
         has_range = True
     if header.get("Content-Range"):
-        length_unknown = False
-    if has_chunk: 
-        #内存复制问题
-        content = buf.getvalue()
-        chunk_end = content.rfind("0\r\n\r\n") 
-        if chunk_end < 0 or content[chunk_end-1].isdigit():
-            return
-        normal = StringIO()
-        try:
-            handle_chunked(buf, normal) 
-        except Exception as e: 
-            remove_task(task, why="chunked: %s" % e)
-            return 
-        buf.close()
-        task["recv"] = normal 
-        call_parser(task) 
-        remove_task(task)   
+        length_unknown = False 
+    if task["recv"].tell() >= total_length: 
+        parse_http_buffer(task) 
         return 
-    if buf.tell() >= total_length:
-        call_parser(task)
-        remove_task(task)
-        return 
-    if length_unknown and not has_chunk: 
-        try:
-            data = task["con"].recv(4) 
-        except socket.error as e:
-            if e.errno != errno.EINPROGRESS:
-                remove_task(task, why="检查http流结尾时失效") 
-            return 
-        #远端已经关闭, 流结束
-        if not data:
-            call_parser(task) 
-            remove_task(task)
-        else:
-            task["recv"].write(data) 
+    if header.get("Transfer-Encoding") == "chunked": 
+        if not "chunked_b" in task:
+            task["chunked_b"] = StringIO()
+            task["chunked_idx"] = 0
+        decode_chunk_stream(task) 
+
 
 
 def handle_pollin(task): 
     con = task["con"]
-    recv_buffer = task["recv"] 
-    #如果连接被异常终止 
-    mark = recv_buffer.tell()
-    recv_buffer.write(con.recv(4)) 
-    #连接的正常终止
-    if recv_buffer.tell() == mark:
-        remove_task(task)
-        return 
-    read_to_buffer(con, recv_buffer) 
-    #通知streamer
-    if task["streamer"]:
-        mark = recv_buffer.tell()
-        task["streamer"](task, recv_buffer)
-        recv_buffer.seek(mark) 
+    recv = task["recv"] 
+    if read_to_buffer(con, recv): 
+        parse_http_buffer(task)
+        return
     #找http头并解析 
     if task["status"] & STATUS_RECV:
-        content = recv_buffer.getvalue()
+        content = recv.getvalue()
         body_pos = content.find("\r\n\r\n") 
         #没找到头再等 
         if body_pos < 0:
             return
         task["status"] = STATUS_HEADER
-        recv_buffer.truncate(0)
-        recv_buffer.write(content[body_pos+4:]) 
+        recv.truncate(0)
+        recv.write(content[body_pos+4:]) 
         try:
             task["resp_header"] = parse_server_header(content[:body_pos]) 
         except (ValueError, IndexError, TypeError) as e: 
@@ -598,11 +617,11 @@ def handle_event(ep):
             continue
         if event & EPOLLOUT: 
             if task["status"] & STATUS_SEND:
-                task["start"] = time() 
+                task["start"] = time.time() 
                 handle_remote_connect(task) 
             if task["send"].tell():
                 #连接有有效活动更新活动时间 
-                task["start"] = time() 
+                task["start"] = time.time() 
                 try:
                     handle_write_later(task) 
                 except ValueError:  
@@ -610,7 +629,7 @@ def handle_event(ep):
                     continue
         if event & EPOLLIN:
             #连接有有效活动更新活动时间 
-            task["start"] = time()
+            task["start"] = time.time()
             try:
                 handle_pollin(task) 
             except ValueError:
@@ -656,7 +675,7 @@ def find_timeout(item, cur):
 
 
 def do_timer(): 
-    current = time() 
+    current = time.time() 
     g["timer_signal"] = False
     if current - http_time > config["timeout"]: 
         #根据任务开始的时间排序
@@ -696,8 +715,8 @@ def do_timer():
 
 
 def run_async(ep): 
-    g["http_time"] = time()
-    g["task_time"] = time()
+    g["http_time"] = time.time()
+    g["task_time"] = time.time()
     g["timer_signal"] = False
     signal.setitimer(signal.ITIMER_REAL, 1, 1)
     signal.signal(signal.SIGALRM, internal_timer)
@@ -724,7 +743,6 @@ def internal_timer(signum, frame):
 
 
 
-
 def fill_task(task): 
     task["send"] = StringIO() 
     task["recv"] = StringIO() 
@@ -736,8 +754,7 @@ def fill_task(task):
         "random": "",
         "fd": -1, 
         "resp_header": {},
-        "parser": nope_parser,
-        "streamer": None,
+        "parser": nope_parser, 
         "start": 0,
         "retry": 0,
         "status": STATUS_SEND,
@@ -748,13 +765,44 @@ def fill_task(task):
             task[k] = v
 
 
+def preset_dns(task_list): 
+    for i in task_list:
+        d = urlparse(i["url"])
+        if "host" not in d:
+            continue
+        host = d["host"]
+        if "port" not in d:
+            port = 80
+        else:
+            port = d["port"]
+        remote = "%s:%d" % (d["host"], port) 
+        if remote in dns_buffer:
+            continue
+        start = time.time() 
+        addrs = socket.getaddrinfo(host, port)
+        cost = time.time() - start
+        if cost > 1:
+            print "dns slow query: %s, %s" % (cost, host)
+        if not len(addrs):
+            raise socket.error("dns query failed: %s" % host) 
+        dns_buffer[remote] = addrs[0][-1] 
+
+
+def log_with_time(msg):
+    print u"async_http %s: %s" % (time.ctime(), repr(msg)) 
+
+
+
 def dispatch_tasks(task_list): 
     g["ep"] = epoll() 
     #补全任务缺少的
     for i in task_list: 
         fill_task(i) 
     #初始化任务管理 
+    preset_dns(task_list)
     space = config["limit"]
+    start_time = time.time()
+    acnt =  len(task_list)
     for i in task_list: 
         while True:
             random = get_random() 
@@ -770,6 +818,11 @@ def dispatch_tasks(task_list):
                 continue
             space -= 1 
     run_async(ep) 
+    fcnt = len(failed_tasks) 
+    log_with_time("acnt: %d, fcnt: %d, time: %d" % (acnt,
+        fcnt, time.time() - start_time))
+    for k,v in failed_tasks.iteritems():
+        log_with_time("failed: %s" % v["url"])
 
 
 
@@ -791,7 +844,6 @@ def loop_until_done(task_list):
 
 
 
-
 def insert_task(task):
     task = default_copy(task)
     fill_task(task)
@@ -807,7 +859,7 @@ def insert_task(task):
 def wait_timeout(n): 
     #临时忽略itimer产生的信号
     signal.signal(signal.SIGALRM, signal.SIG_IGN)
-    sleep(n) 
+    time.sleep(n) 
     #恢复信号处理
     signal.signal(signal.SIGALRM, internal_timer)
 
