@@ -145,14 +145,14 @@ def generate_request(**kwargs):
         header["Host"] = host
     #没代理
     if not kwargs.get("proxy"): 
-        del urld["scheme"] 
+        del urld["schema"] 
         del urld["host"]
         if "port" in urld:
             del urld["port"] 
     else:
         #有代理更新, 连接点换成代理
         pd = urlparse(kwargs["proxy"])
-        if pd["scheme"] in "https":
+        if pd["schema"] in "https":
             host = pd["host"]
             port = int(pd["port"])
         else:
@@ -826,7 +826,7 @@ def dispatch_tasks(task_list):
 
 
 
-def loop_until_done(task_list):
+def repeat_tasks(task_list):
     global failed_tasks
     dispatch_tasks(task_list) 
     while len(failed_tasks):

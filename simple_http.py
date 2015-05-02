@@ -76,18 +76,18 @@ def do_request(url, **kwargs):
     else:
         pauth = None 
     #maybe ssl
-    use_ssl, port = get_scheme(urld) 
+    use_ssl, port = get_schema(urld) 
     #handle query string
     if kwargs.get("query"):
         urld["query"] = generate_query(kwargs["query"]) 
     host = urld["host"] 
-    #http proxy: remove scheme://host:port 
+    #http proxy: remove schema://host:port 
     if proxy.startswith("http"):
-        urld["scheme"] = "http"
+        urld["schema"] = "http"
     else: 
         del urld["host"] 
-        if "scheme" in urld:
-            del urld["scheme"] 
+        if "schema" in urld:
+            del urld["schema"] 
         if "port" in urld:
             port = int(urld["port"])
             del urld["port"] 
@@ -257,11 +257,11 @@ def connect_sock5(sock, remote, server):
 def connect_proxy(sock, remote, proxy): 
     proxy_type = None
     proxyd = urlparse(proxy)
-    scheme = proxyd["scheme"]
-    if scheme in "https": 
+    schema = proxyd["schema"]
+    if schema in "https": 
         proxy_type = "http"
         sock.connect((proxyd["host"], int(proxyd["port"])))
-    elif scheme == "socks5": 
+    elif schema == "socks5": 
         proxy_type = "socks5"
         connect_sock5(sock, remote, (proxyd["host"], int(proxyd["port"]))) 
     else:

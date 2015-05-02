@@ -248,18 +248,18 @@ def basic_auth(user, password):
 
 def proxy_auth(proxy): 
     proxyd = urlparse(proxy) 
-    if proxyd["scheme"] == "http": 
+    if proxyd["schema"] == "http": 
         return basic_auth(proxyd.get("user"), proxyd.get("password")) 
 
 
-def get_scheme(urld): 
+def get_schema(urld): 
     use_ssl = False
-    if "scheme" in urld:
-        if urld["scheme"] == "https":
+    if "schema" in urld:
+        if urld["schema"] == "https":
             use_ssl = True 
     if use_ssl:
         if not has_ssl: 
-            raise socket.error("Unsupported scheme")
+            raise socket.error("Unsupported schema")
         port = 443 
     else:
         port = 80 
@@ -383,8 +383,8 @@ def auto_content_type(name):
 
 def generate_url(d):
     ret = []
-    if "scheme" in d: 
-        ret.append(d["scheme"] + "://") 
+    if "schema" in d: 
+        ret.append(d["schema"] + "://") 
     if "user" in d:
         ret.append(d["user"]) 
         if "password" in d: 
@@ -432,7 +432,7 @@ def urlparse(url):
     hps = ne.split("://") 
     host = hps[0]
     if len(hps) > 1:
-        d["scheme"] = hps[0] 
+        d["schema"] = hps[0] 
         host = hps[1] 
     #http://v2ex.com/static/img/qbar_light@2x.png'
     us = host.find("@") 
