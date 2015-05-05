@@ -406,7 +406,7 @@ def handle_write_later(task):
 
 def read_to_buffer(con, buf): 
     #一次把可用数据读出
-    while 1:
+    while True:
         try: 
             #内存复制问题
             mark = buf.tell()
@@ -520,6 +520,9 @@ def decode_chunk_stream(task):
 
 def parse_http_buffer(task): 
     header = task.get("resp_header")
+    if not header: 
+        parse_header(task)
+        header = task.get("resp_header")
     if not header:
         remove_task(task)
         return
@@ -527,7 +530,29 @@ def parse_http_buffer(task):
         decode_chunked(task)
     call_parser(task) 
     remove_task(task)   
-    
+
+
+
+def parse_header(task): 
+    recv = task["recv"]
+    content = recv.getvalue()
+    body_pos = content.find("\r\n\r\n") 
+    #没找到头再等 
+    if body_pos < 0:
+        return 
+    recv.truncate(0)
+    recv.write(content[body_pos+4:]) 
+    try:
+        task["resp_header"] = parse_server_header(content[:body_pos]) 
+    except (ValueError, IndexError, TypeError) as e: 
+        remove_task(task, why="解析http头失败: %s" % e)
+        return 
+    if task["header_only"]:
+        call_parser(task)
+        remove_task(task)
+        return
+    task["status"] = STATUS_HEADER
+
 
 
 def parse_response(header, task): 
@@ -554,34 +579,17 @@ def parse_response(header, task):
 
 
 def handle_pollin(task): 
-    con = task["con"]
-    recv = task["recv"] 
-    if read_to_buffer(con, recv): 
+    con = task["con"] 
+    if read_to_buffer(con, task["recv"]): 
         parse_http_buffer(task)
         return
     #找http头并解析 
     if task["status"] & STATUS_RECV:
-        content = recv.getvalue()
-        body_pos = content.find("\r\n\r\n") 
-        #没找到头再等 
-        if body_pos < 0:
-            return
-        task["status"] = STATUS_HEADER
-        recv.truncate(0)
-        recv.write(content[body_pos+4:]) 
-        try:
-            task["resp_header"] = parse_server_header(content[:body_pos]) 
-        except (ValueError, IndexError, TypeError) as e: 
-            remove_task(task, why="解析http头失败: %s" % e)
-            return 
-        if task["header_only"]:
-            call_parser(task)
-            remove_task(task)
-            return
+        parse_header(task)
     if task["status"] & STATUS_HEADER: 
         try:
             parse_response(task["resp_header"], task)
-        except ValueError as e: 
+        except (KeyError, ValueError) as e: 
             remove_task(task, why="解析http响应主体失败: %s" % e)
             return 
 
@@ -596,44 +604,44 @@ def handle_remote_connect(task):
     task["status"] = STATUS_RECV 
 
 
+def event_write(task): 
+    if task["status"] & STATUS_SEND: 
+        handle_remote_connect(task) 
+    if task["send"].tell():
+        #连接有有效活动更新活动时间 
+        try:
+            handle_write_later(task) 
+        except ValueError:  
+            remove_task(task, why="write later时buffer失效") 
+
+
+def event_read(task): 
+    try:
+        handle_pollin(task) 
+    except ValueError:
+        remove_task(task, why="处理pollin时buffer失效")
+
 
 def handle_event(ep): 
+    time_now = time.time()
     for fd, event in ep.poll(2): 
         #不太可能的情况
-        if fd not in fd_task: 
+        task = fd_task.get(fd)
+        if not task:
             try:
                 ep.unregister(fd)
             except:
-                pass
-            continue
-        #可能在任何时候被信号中断
-        try:
-            task = fd_task[fd] 
-        except KeyError:
-            continue
+                continue 
         if event & EPOLLERR:
             #出错，清理任务 
             remove_task(task, why="epoll err") 
-            continue
+            continue 
         if event & EPOLLOUT: 
-            if task["status"] & STATUS_SEND:
-                task["start"] = time.time() 
-                handle_remote_connect(task) 
-            if task["send"].tell():
-                #连接有有效活动更新活动时间 
-                task["start"] = time.time() 
-                try:
-                    handle_write_later(task) 
-                except ValueError:  
-                    remove_task(task, why="write later时buffer失效")
-                    continue
+            task["start"] = time_now 
+            event_write(task)
         if event & EPOLLIN:
-            #连接有有效活动更新活动时间 
-            task["start"] = time.time()
-            try:
-                handle_pollin(task) 
-            except ValueError:
-                remove_task(task, why="处理pollin时buffer失效")
+            task["start"] = time_now
+            event_read(task)
 
 
 def run_debug(): 
@@ -674,44 +682,55 @@ def find_timeout(item, cur):
 
 
 
+def clean_tasks(now): 
+    #根据任务开始的时间排序
+    sorted_tasks = sorted(tasks.items(),
+            key = lambda x: x[1]["start"],
+            reverse=True) 
+    #二分查找超时任务 
+    mark = bisect_left(sorted_tasks, 
+            current,
+            find_timeout) 
+    for i in range(mark):                
+        task = sorted_tasks[i][1] 
+        remove_task(task, why="连接超时被清理")
+
+
+
+def connect_more(now): 
+    #二分查找启用新任务
+    #根据任务开始的时间排序
+    sorted_tasks = sorted(tasks.items(),
+            key = lambda x: x[1]["start"],
+            reverse=True) 
+    mark = bisect_left(sorted_tasks,
+            0, 
+            find_new_task) 
+    space = config["limit"] - len(running)
+    for _,v in sorted_tasks[mark:]: 
+        if space <= 0:
+            break
+        #如果有空位则发布新的任务
+        if v["con"]:
+            continue
+        try:
+            connect_remote(v) 
+        except ValueError as e:
+            remove_task(v, why="连接时buffer失效")
+            continue 
+        space -= 1 
+
+
 def do_timer(): 
     current = time.time() 
     g["timer_signal"] = False
     if current - http_time > config["timeout"]: 
-        #根据任务开始的时间排序
-        sorted_tasks = sorted(tasks.items(),
-                key = lambda x: x[1]["start"],
-                reverse=True) 
-        #二分查找超时任务 
-        mark = bisect_left(sorted_tasks, 
-                current,
-                find_timeout) 
-        for i in range(mark):                
-            task = sorted_tasks[i][1] 
-            remove_task(task, why="连接超时被清理")
+        clean_tasks(current)
         g["http_time"]  = current
     if current - task_time > config["interval"]: 
-        #二分查找启用新任务
-        #根据任务开始的时间排序
-        sorted_tasks = sorted(tasks.items(),
-                key = lambda x: x[1]["start"],
-                reverse=True) 
-        mark = bisect_left(sorted_tasks,
-                0, 
-                find_new_task) 
-        space = config["limit"] - len(running)
-        for _,v in sorted_tasks[mark:]: 
-            if space <= 0:
-                break
-            #如果有空位则发布新的任务
-            if not v["con"]:
-                try:
-                    connect_remote(v) 
-                except ValueError as e:
-                    remove_task(v, why="连接时buffer失效")
-                    continue 
-                space -= 1 
-        g["task_time"] = current 
+        connect_more(current)
+        g["task_time"] = current
+
 
 
 def run_async(ep): 
