@@ -689,7 +689,7 @@ def clean_tasks(now):
             reverse=True) 
     #二分查找超时任务 
     mark = bisect_left(sorted_tasks, 
-            current,
+            now,
             find_timeout) 
     for i in range(mark):                
         task = sorted_tasks[i][1] 
