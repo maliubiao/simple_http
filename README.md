@@ -60,6 +60,31 @@ Out[9]:
  'text': '<html>\r\n<head><title>302 Found</title></head>\r\n<body bgcolor="white">\r\n<center><h1>302 Found</h1></center>\r\n<hr><center>bfe/1.0.8.2</center>\r\n</body>\r\n</html>\r\n',
  'total_length': 160,
  'url': 'http://baidu.com'}
+
+In [6]: res = simple_http.get("http://www.baidu.com", redirect=10)
+redirect to https://www.baidu.com/
+
+In [7]: res["status"]
+Out[7]: 200
+
+In [8]: res["header"]
+Out[8]: 
+{'BDPAGETYPE': '1',
+ 'BDQID': '0x857e6d5d0000bf0d',
+ 'BDUSERID': '0',
+ 'Cache-Control': 'private',
+ 'Connection': 'keep-alive',
+ 'Content-Encoding': 'gzip',
+ 'Content-Type': 'text/html; charset=utf-8',
+ 'Cxy_all': 'baidu+f132f05584d0062745fea455fbb7d59f',
+ 'Date': 'Thu, 21 May 2015 15:54:44 GMT',
+ 'Expires': 'Thu, 21 May 2015 15:54:44 GMT',
+ 'Server': 'bfe/1.0.8.2',
+ 'Set-Cookie': 'BDSVRTM=11; path=/\r\nBD_HOME=0; path=/\r\nH_PS_PSSID=13782_1426_13519_13075_12868_14166_14297_10562_12722_14155_14172_13203_14244_11518_13932_14309_14321_14182_8498_14195; path=/; domain=.baidu.com\r\n__bsi=11945547936248309498_00_34_N_N_17_0303_C02F_N_N_N; expires=Thu, 21-May-15 15:54:49 GMT; domain=www.baidu.com; path=/',
+ 'Transfer-Encoding': 'chunked',
+ 'Vary': 'Accept-Encoding',
+ 'X-Powered-By': 'HPHP',
+ 'X-UA-Compatible': 'IE=Edge,chrome=1'}
 ``` 
 
 ###使用不同的header
