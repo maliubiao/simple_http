@@ -18,6 +18,7 @@ import time
 import traceback
 
 from cStringIO import StringIO 
+
 from select import * 
 
 
@@ -109,7 +110,9 @@ config = {
 failed_tasks = { } 
 
 
-copy_keys = ("url", "parser", "method")
+copy_keys = ("url", "parser", "method",
+    "retry", "redirect", "session", "chain",
+    "prev", "chain_idx", "ssl", "urlsset", "header", "cookie") 
 
 
 possible_methods = set(("GET", "POST", "HEAD", "PUT", "DELETE")) 
@@ -120,136 +123,74 @@ def default_copy(task):
     for i in copy_keys:
         if i in task:
             t[i] = task[i]
-    return t
+    return t 
 
 
-def generate_request(**kwargs): 
-    url = kwargs["url"]
-    request_list = []
-    urld = urlparse(url) 
-    if kwargs.get("query"):
-        urld["query"] = generate_query(kwargs["query"]) 
-    if "header" in kwargs:
-        if not kwargs["header"]:
+
+def generate_request(task): 
+    url = task["url"]
+    rl = []
+    url_parts = urlparse(url) 
+    if task.get("query"):
+        url_parts["query"] = generate_query(task["query"]) 
+    if "header" in task:
+        if not task["header"]:
             header = default_header.copy()
         else:
-            header = kwargs["header"]
+            header = task["header"]
     else:
         header = default_header.copy() 
-    host = urld["host"]
-    if "port" in urld:
-        port = int(urld["port"])
+    host = url_parts["host"]
+    if "port" in url_parts:
+        port = int(url_parts["port"])
         header["Host"] = "%s:%d" % (host, port) 
     else:
         port = 80 
         header["Host"] = host
+    if url_parts.get("schema") == "https":
+        task["ssl"] = True 
+        port = 443
+    else:
+        task["ssl"] = False
+    if "port" in url_parts:
+        port = int(url_parts["port"])
     #没代理
-    if not kwargs.get("proxy"): 
-        del urld["schema"] 
-        del urld["host"]
-        if "port" in urld:
-            del urld["port"] 
+    if not task.get("proxy"): 
+        del url_parts["schema"] 
+        del url_parts["host"]
+        if "port" in url_parts:
+            del url_parts["port"] 
     else:
         #有代理更新, 连接点换成代理
-        pd = urlparse(kwargs["proxy"])
+        pd = urlparse(task["proxy"])
         if pd["schema"] in "https":
             host = pd["host"]
             port = int(pd["port"])
         else:
             raise Exception("不支持的代理格式") 
     #不处理fragment
-    if "fragment" in urld:
-        del urld["fragment"] 
-    path = generate_url(urld)
-    method = kwargs.get("method", METHOD_GET).upper()
+    if "fragment" in url_parts:
+        del url_parts["fragment"] 
+    path = generate_url(url_parts)
+    method = task.get("method", METHOD_GET).upper()
     if method not in possible_methods:
         raise ValueError("unsupported method: %s" % method) 
     if method in ("POST", "PUT"):
-        content = generate_post(header, kwargs["payload"]) 
+        content = generate_post(header, task["payload"]) 
         header["Content-Length"] = str(len(content)) 
-    request_list.append(generate_client_header(header, method, path))
-    if kwargs.get("cookie"):
-        request_list.append("Cookie: ")
-        request_list.append(generate_cookie(kwargs["cookie"]))
-        request_list.append(HEADER_END)
+    rl.append(generate_request_header(header, method, path))
+    if task.get("cookie"):
+        rl.append("Cookie: ")
+        rl.append(generate_cookie(task["cookie"]))
+        rl.append(HEADER_END)
     else:
-        request_list.append("\r\n") 
+        rl.append("\r\n") 
     if method in ("POST", "PUT"): 
-        request_list.append(content)
-    body = "".join(request_list)
+        rl.append(content)
+    body = "".join(rl) 
     return (host, port), body 
 
 
-
-STATUS_CONNECT = 0x1 << 3
-STATUS_CONNECTED = 0x1 << 4 
-STATUS_FAILED = 0x1 << 6
-STATUS_SEND = 0x1 << 7
-STATUS_RECV = 0x1 << 8
-STATUS_HEADER = 0x1 << 9  
-STATUS_DONE = 0x1 << 10
-
-
-
-def pool_set(task, random): 
-    host = task["host"] 
-    #添加到session 
-    if (host in sconf and
-            host in session):
-        s = session[host]
-        #添加到free list, 从busy list中移除
-        if len(s["free"]) < sconf[host]: 
-            s["free"][random] = task["con"]
-            del s["busy"][random]
-            return True
-    else:
-        return False
-
-
-def remove_task(task, why=None):
-    try:
-        catch_bug(task, why=why)
-    except Exception as e:
-        print "async_http: remove_task: %s" % str(e)
-
-
-def catch_bug(task, why=None): 
-    random = task["random"] 
-    if why and config["retry"]: 
-        task["reason"] = why
-        failed_tasks[random] = task 
-    con = task["con"]
-    fd = task["fd"] 
-    #先清理这个
-    if fd in fd_task:
-        del fd_task[fd] 
-    try:
-        ep.unregister(fd) 
-    except IOError:
-        pass 
-    if why or not pool_set(task, random):
-        try:
-            con.shutdown(socket.SHUT_RDWR)
-        except socket.error:
-            pass
-        try:
-            con.close()
-        except OSError:
-            pass 
-    #关闭缓冲
-    task["send"].close() 
-    task["recv"].close() 
-    #清理注册 
-    if random in running:
-        del running[random] 
-    if random in tasks:
-        del tasks[random] 
-
-
-
-#连接池
-sconf =  {} 
-session = {}
 
 #dns缓存
 dns_buffer = {}
@@ -272,159 +213,61 @@ def set_dns_buffer(hosts):
         dns_buffer["%s:%s" %(host, port)] = ret[0][-1]
 
 
-def connect(task, remote): 
-    #开启异步连接
-    try:
-        reqsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        reqsock.setblocking(0)
-        reqfd = reqsock.fileno()
-        ep.register(reqfd, EPOLLIN|EPOLLOUT|EPOLLERR)
-    except Exception as e: 
-        if e.errno != errno.EMFILE: 
-            remove_task(task, why="create socket: %s" % e)
-        return 
-    #fd -> task
-    fd_task[reqfd] = task
-    task["con"] =  reqsock
-    task["fd"] = reqfd 
-    #有dns缓存则使用
-    remote_str = "%s:%s" % remote
-    if remote_str in dns_buffer:
-        remote = dns_buffer[remote_str]
-    try:
-        reqsock.connect(remote)
-    except socket.error as e:
-        if e.errno != errno.EINPROGRESS: 
-            remove_task(task, why="connect remote: %s" % e) 
-            return 
-    return reqsock
-
-
-
-def get_sock(task, remote): 
-    host = "%s:%d" % remote 
-    _, sock = session[host]["free"].popitem() 
-    #检测一下socket本地关闭
-    try: 
-        sock.setblocking(0) 
-    except socket.error: 
-        sock = connect(task, remote) 
-    fd = sock.fileno()
-    try:
-        ep.register(fd, EPOLLIN|EPOLLOUT|EPOLLERR)
-    except:
-        remove_task(task, why="epoll注册失败")
+def auto_redirect(task): 
+    task["redirect"] = task["redirect"] - 1 
+    l1 = task["res_header"].get("Location")
+    if not l1:
+        l1 = task["res_header"].get("location") 
+    if not l1:
+        log_with_time("redirect without a location: %s" % str(task["url"]))
         return
-    rand = task["random"]
-    #fd -> task
-    fd_task[fd] = task
-    #检测一下socket远程关闭
-    try: 
-        x = sock.recv(1) 
-        sock = connect(task, remote)
-    except socket.error as e:
-        if e.errno != errno.EAGAIN: 
-            sock = connect(task, remote) 
-    task["con"] = sock 
-    task["fd"] = fd
-    #标记为已用
-    session[host]["busy"][rand] = sock
-    return sock 
-
-
-
-def pool_get(task, remote): 
-    host = "%s:%d" % remote 
-    task["host"] = host 
-    #如果配置了连接池
-    if host in sconf: 
-        #如果池里有项
-        if host in session:
-            #如果有可用的
-            s = session[host]
-            if len(s["free"]): 
-                sock = get_sock(task, remote) 
-            #没有则新建
-            else:
-                sock = connect(task, remote)
-                s["busy"][task["random"]] = sock
-        #如果池里没有则新建
-        else: 
-            sock = connect(task, remote) 
-            #用字典管理可用与否的socket
-            session[host] = {
-                    "busy": {task["random"]: sock},
-                    "free": {},
-                    }
-    #没有配置连接池只用一次
+    log_with_time("redirect to: %s" % l1) 
+    urlsset = task["urlsset"]
+    if l1 in urlsset: 
+        urlsset[l1] += 1
     else:
-        sock = connect(task, remote)
-    task["con"] = sock
-
-
-def connect_remote(task): 
-    #生成请求，暂时写到发送缓冲 
-    try:
-        remote, content = generate_request(**task) 
-    except KeyError as e:
-        log_with_time("generate_request error: %s" % e)
-        return 
-    if "remote" in task:
-        remote = task["remote"] 
-    if task.get("method", METHOD_GET).lower() == "head":
-        task["header_only"] = True
-    else:
-        task["header_only"] = False
-    pool_get(task, remote) 
-    task["send"].write(content) 
-    task["status"] = STATUS_SEND 
-    #设定连接初始化时间 
-    task["start"] = time.time()
-
-
-def handle_write_later(task):
-    #网络阻塞， 重发 
-    buf = task["send"]  
-    con = task["con"] 
-    data = buf.getvalue()
-    count = len(data)
-    try:
-        sent = con.send(data)
-    except socket.error as e:
-        if e.errno != errno.EAGAIN: 
-            remove_task(task, why="write_later send: %s" % e)
+        urlsset[l1] = 1 
+    if urlsset[l1] > 3 or len(urlsset) > 10:
+        log_with_time("endless redirect: %s" % l1)
+        remove_task(task, why="endless redirect")
         return
-    buf.truncate(0)
-    #避免busy loop
-    if sent != count:
-        buf.write(data[sent:])
-        ep.modify(task["fd"], EPOLLIN|EPOLLOUT|EPOLLERR)
-    else: 
-        ep.modify(task["fd"], EPOLLIN|EPOLLERR)
+    if not "cookie" in task:
+        task["cookie"] = {} 
+    task["cookie"].update(get_cookie(task["res_cookie"])) 
+    task["url"] = l1
+    insert_task(task) 
 
 
 
-def read_to_buffer(con, buf): 
-    #一次把可用数据读出
-    while True:
-        try: 
-            #内存复制问题
-            mark = buf.tell()
-            buf.write(con.recv(409600)) 
-            #连接终止退出
-            if buf.tell() == mark:
-                return True
-        except socket.error as e:
-            if e.errno == errno.EAGAIN:
-                return False
-            raise e 
+def call_chain_filter(task): 
+    flt = chain_next(task)
+    if not flt: 
+        return 
+    next = flt(task) 
+    insert_task(next) 
 
-            
 
+def assign_key(d1, d2, *keys):
+    for key in keys:
+        if key in d2:
+            d1[key] = d2[key] 
 
 
 def call_parser(task): 
-    enc =  task["resp_header"].get("Content-Encoding") 
+    res_header = task["res_header"] 
+    status = task["res_status"]["status"]
+    if task["redirect"] > 0 and 400 > status > 300: 
+        auto_redirect(task)
+        return 
+    if task.get("chain"):
+        if call_chain_filter(task): 
+            return 
+        prev = task["prev"] 
+        assign_key(prev, task, 
+                "res_status", "res_cookie",
+                "res_header", "recv") 
+        task = prev 
+    enc =  task["res_header"].get("Content-Encoding") 
     text = task["recv"].getvalue() 
     task["recv"].truncate(0) 
     task["text"] = text
@@ -432,7 +275,11 @@ def call_parser(task):
         task["text"] = zlib.decompress(text, 16+zlib.MAX_WBITS)
     elif enc == "deflate": 
         task["text"] = zlib.decompress(text, -zlib.MAX_WBITS) 
-    task["parser"](task) 
+    try:
+        task["parser"](task) 
+    except:
+        traceback.print_exc()
+        exit(1)
 
 
 
@@ -445,6 +292,7 @@ def decode_chunked(task):
         return 
     task["recv"].close()
     task["recv"] = normal 
+
 
 
 
@@ -475,6 +323,7 @@ def convert_chunked(cbuf, normal_stream):
         normal_stream.write(chunk) 
 
 
+
 def decode_chunk_stream(task):
     goout = False
     b = task["chunked_b"]
@@ -494,17 +343,21 @@ def decode_chunk_stream(task):
                 break
             num += char 
         if goout:
-            break
+            recv.seek(back_idx, io.SEEK_SET) 
+            break 
         recv.seek(1, io.SEEK_CUR)
-        x = int(num, 16) 
+        try:
+            x = int(num, 16) 
+        except:
+            pdb.set_trace()
         if not x:
             done = True
             break
         chunk = recv.read(x) 
         if len(chunk) != x:
             recv.seek(back_idx, io.SEEK_SET)
-            break
-        recv.seek(2, io.SEEK_CUR)
+            break 
+        recv.seek(2, io.SEEK_CUR) 
         b.write(chunk) 
     task["chunked_idx"] = recv.tell()
     recv.seek(recv_end, io.SEEK_SET)
@@ -519,10 +372,10 @@ def decode_chunk_stream(task):
 
 
 def parse_http_buffer(task): 
-    header = task.get("resp_header")
+    header = task.get("res_header")
     if not header: 
         parse_header(task)
-        header = task.get("resp_header")
+        header = task.get("res_header")
     if not header:
         remove_task(task)
         return
@@ -543,16 +396,18 @@ def parse_header(task):
     recv.truncate(0)
     recv.write(content[body_pos+4:]) 
     try:
-        task["resp_header"] = parse_server_header(content[:body_pos]) 
-    except (ValueError, IndexError, TypeError) as e: 
+        status, cookie, header = parse_response_header(content[:body_pos]) 
+        task["res_cookie"] = cookie
+        task["res_header"] = header
+        task["res_status"] = status
+    except (IndexError, TypeError) as e: 
         remove_task(task, why="解析http头失败: %s" % e)
         return 
     if task["header_only"]:
         call_parser(task)
         remove_task(task)
         return
-    task["status"] = STATUS_HEADER
-
+    task["status"] = STATUS_HEADER 
 
 
 def parse_response(header, task): 
@@ -578,54 +433,311 @@ def parse_response(header, task):
 
 
 
-def handle_pollin(task): 
+STATUS_CONNECT = 0x1 << 3 
+STATUS_CONNECTED = 0x1 << 4 
+STATUS_SSL_HANDSHAKE = 0x1 << 5
+STATUS_FAILED = 0x1 << 6
+STATUS_SEND = 0x1 << 7
+STATUS_RECV = 0x1 << 8
+STATUS_HEADER = 0x1 << 9  
+STATUS_DONE = 0x1 << 10
+
+
+
+def remove_task(task, why=None): 
+    try:
+        catch_bug(task, why=why)
+    except Exception as e:
+        print "async_http: remove_task: %s" % str(e)
+
+
+
+def catch_bug(task, why=None): 
+    random = task["random"] 
+    if why and config["retry"]: 
+        task["reason"] = why
+        failed_tasks[random] = task 
+    con = task["con"]
+    fd = task["fd"] 
+    #先清理这个
+    if fd in fd_task:
+        del fd_task[fd] 
+    try:
+        ep.unregister(fd) 
+    except IOError:
+        pass 
+    if why:
+        try:
+            con.shutdown(socket.SHUT_RDWR)
+        except socket.error:
+            pass
+        try:
+            con.close()
+        except (ValueError, OSError):
+            pass 
+    #关闭缓冲
+    task["send"].close() 
+    task["recv"].close() 
+    #清理注册 
+    if random in running:
+        del running[random] 
+    if random in tasks:
+        del tasks[random] 
+
+
+
+
+def connect(task, remote): 
+    #开启异步连接
+    try:
+        reqsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        reqsock.setblocking(0)
+        reqfd = reqsock.fileno()
+        ep.register(reqfd, EPOLLIN|EPOLLOUT|EPOLLERR)
+    except Exception as e: 
+        if e.errno != errno.EMFILE: 
+            remove_task(task, why="create socket: %s" % e)
+        return 
+    #fd -> task
+    fd_task[reqfd] = task
+    task["con"] =  reqsock
+    task["fd"] = reqfd 
+    #有dns缓存则使用
+    remote_str = "%s:%s" % remote
+    if remote_str in dns_buffer:
+        remote = dns_buffer[remote_str] 
+    try:
+        reqsock.connect(remote)
+    except socket.error as e: 
+        if e.errno == errno.EINPROGRESS: 
+            return
+        raise e
+
+
+
+def connect_remote(task): 
+    #生成请求，暂时写到发送缓冲 
+    try:
+        remote, content = generate_request(task) 
+    except KeyError as e:
+        log_with_time("generate_request error: %s" % e)
+        return 
+    if "remote" in task:
+        remote = task["remote"] 
+    if task.get("method", METHOD_GET).lower() == "head":
+        task["header_only"] = True
+    else:
+        task["header_only"] = False
+    try:
+        connect(task, remote)        
+    except Exception as e:
+        remove_task(task, why="connect remote: %s" % e) 
+        return
+    task["send"].write(content) 
+    task["status"] = STATUS_SEND 
+    #设定连接初始化时间 
+    task["start"] = time.time()
+
+
+
+
+def send_remain(task):
+    #网络阻塞， 重发 
+    buf = task["send"]  
     con = task["con"] 
-    if read_to_buffer(con, task["recv"]): 
-        parse_http_buffer(task)
+    data = buf.getvalue()
+    count = len(data)
+    try:
+        sent = con.send(data)
+    except socket.error as e:
+        if e.errno != errno.EAGAIN: 
+            remove_task(task, why="write_later send: %s" % e)
+        return
+    buf.truncate(0)
+    #避免busy loop
+    if sent != count:
+        buf.write(data[sent:])
+        ep.modify(task["fd"], EPOLLIN|EPOLLOUT|EPOLLERR)
+    else: 
+        ep.modify(task["fd"], EPOLLIN|EPOLLERR) 
+
+
+
+def send_remain_ssl(task):
+    #网络阻塞， 重发 
+    buf = task["send"]  
+    con = task["ssl_con"] 
+    data = buf.getvalue()
+    count = len(data) 
+    try:
+        sent = con.send(data)
+    except ssl.SSLError as e: 
+        if handle_ssl_exception(task, e) < 0: 
+            remove_task(task, why="send_remain_ssl: %s" % e)
+            return
+    buf.truncate(0)
+    #避免busy loop
+    if sent != count:
+        buf.write(data[sent:])
+        ep.modify(task["fd"], EPOLLIN|EPOLLOUT|EPOLLERR)
+    else: 
+        ep.modify(task["fd"], EPOLLIN|EPOLLERR) 
+
+
+
+def read_to_buffer(task): 
+    #一次把可用数据读出 
+    con = task["con"]
+    buf = task["recv"] 
+    status = 0
+    while True:
+        try: 
+            mark = buf.tell()
+            buf.write(con.recv(409600)) 
+            if buf.tell() == mark:
+                parse_http_buffer(task) 
+                break
+        except socket.error as e:
+            if e.errno == errno.EAGAIN: 
+                status = 1
+            else: 
+                status = -1
+            break
+    return status
+
+
+
+def handle_read(task): 
+    con = task["con"] 
+    status = read_to_buffer(task)
+    if not status: 
+        return
+    elif status < 0:
+        remove_task(task, why="read_to_buffer error") 
         return
     #找http头并解析 
     if task["status"] & STATUS_RECV:
         parse_header(task)
     if task["status"] & STATUS_HEADER: 
         try:
-            parse_response(task["resp_header"], task)
-        except (KeyError, ValueError) as e: 
+            parse_response(task["res_header"], task)
+        except KeyError as e: 
+            remove_task(task, why="解析http响应主体失败: %s" % e)
+            return 
+
+
+def handle_ssl_exception(task, e): 
+    status = 1
+    errno = e.errno
+    #need read
+    if errno == ssl.SSL_ERROR_WANT_READ: 
+        ep.modify(task["fd"], EPOLLIN | EPOLLERR) 
+    #need write
+    elif errno == ssl.SSL_ERROR_WANT_WRITE:
+        ep.modify(task["fd"], EPOLLIN | EPOLLERR | EPOLLOUT) 
+    #other
+    else: 
+        status = -1
+    return status
+
+
+
+def read_to_buffer_ssl(task): 
+    #一次把可用数据读出 
+    con  = task["ssl_con"]
+    buf = task["recv"]
+    status = 0
+    while True:
+        try: 
+            mark = buf.tell()
+            buf.write(con.recv(409600)) 
+            if buf.tell() == mark: 
+                parse_http_buffer(task)
+                break
+        except ssl.SSLError as e: 
+            if e.errno == ssl.SSL_ERROR_ZERO_RETURN: 
+                parse_http_buffer(task) 
+            else:
+                status = handle_ssl_exception(task, e)
+            break
+    return status 
+                
+
+
+def handle_read_ssl(task): 
+    #ssl handshake packet
+    if task["status"] & STATUS_SSL_HANDSHAKE:
+        ssl_do_handshake(task) 
+        return 
+    status = read_to_buffer_ssl(task)
+    if not status: 
+        return
+    elif status < 0:
+        remove_task(task, why="read_to_buffer_ssl")
+        return 
+    #找http头并解析 
+    if task["status"] & STATUS_RECV:
+        parse_header(task)
+    if task["status"] & STATUS_HEADER: 
+        try:
+            parse_response(task["res_header"], task)
+        except KeyError as e: 
             remove_task(task, why="解析http响应主体失败: %s" % e)
             return 
 
 
 
-def handle_remote_connect(task): 
-    #一次不要发太多请求
-    if len(running) > config["limit"]: 
-        return 
-    #能发送则发送并加计数
+def remote_connected(task): 
     running[task["random"]] = task
-    task["status"] = STATUS_RECV 
+    if task.get("ssl"):    
+        task["status"] = STATUS_SSL_HANDSHAKE 
+        task["ssl_con"] = ssl.wrap_socket(task["con"], do_handshake_on_connect=False)
+    else:
+        task["status"] = STATUS_RECV 
+
+
+
+def ssl_do_handshake(task): 
+    con = task["ssl_con"] 
+    try:
+        con.do_handshake()
+        task["status"] = STATUS_RECV 
+        ep.modify(task["fd"], EPOLLERR | EPOLLOUT | EPOLLIN)
+    except ssl.SSLError as e:
+        try:
+            handle_ssl_exception(task, e) 
+        except ssl.SSLError as e:
+            remove_task(task, why="ssl handshake: %s" % e) 
+
 
 
 def event_write(task): 
     if task["status"] & STATUS_SEND: 
-        handle_remote_connect(task) 
+        remote_connected(task) 
+    if task["status"] & STATUS_SSL_HANDSHAKE:
+        ssl_do_handshake(task)
+        return 
     if task["send"].tell():
-        #连接有有效活动更新活动时间 
-        try:
-            handle_write_later(task) 
-        except ValueError:  
-            remove_task(task, why="write later时buffer失效") 
+        if task.get("ssl"): 
+            send_remain_ssl(task) 
+        else: 
+            send_remain(task) 
+
+
 
 
 def event_read(task): 
-    try:
-        handle_pollin(task) 
-    except ValueError:
-        remove_task(task, why="处理pollin时buffer失效")
+    if task.get("ssl"): 
+        handle_read_ssl(task) 
+    else: 
+        handle_read(task) 
+
 
 
 def handle_event(ep): 
     time_now = time.time()
     for fd, event in ep.poll(2): 
-        #不太可能的情况
+        #不太可能的情况 
         task = fd_task.get(fd)
         if not task:
             try:
@@ -642,6 +754,7 @@ def handle_event(ep):
         if event & EPOLLIN:
             task["start"] = time_now
             event_read(task)
+
 
 
 def run_debug(): 
@@ -672,6 +785,7 @@ def find_new_task(item, zero):
         return -1
     else:
         return 1
+
 
 
 def find_timeout(item, cur):
@@ -712,12 +826,8 @@ def connect_more(now):
             break
         #如果有空位则发布新的任务
         if v["con"]:
-            continue
-        try:
-            connect_remote(v) 
-        except ValueError as e:
-            remove_task(v, why="连接时buffer失效")
             continue 
+        connect_remote(v) 
         space -= 1 
 
 
@@ -743,9 +853,7 @@ def run_async(ep):
         try:
             handle_event(ep) 
         except IOError:
-            pass
-        except ValueError:
-            pass
+            pass 
         if timer_signal:
             do_timer()
         #队列完成
@@ -763,25 +871,38 @@ def internal_timer(signum, frame):
 
 
 def fill_task(task): 
+    if task.get("chain") and not task.get("chain_idx"): 
+        task["chain_idx"] = 0 
+        flt = chain_next(task)
+        prev = task
+        task = flt(prev)
+        assert id(task) != id(prev)
+        task["prev"] = prev 
     task["send"] = StringIO() 
     task["recv"] = StringIO() 
     copy = {
-        "proxy": "",
-        "cookie": "", 
-        "url": "",
-        "header": {}, 
+        "proxy": "", 
+        "url": "", 
         "random": "",
         "fd": -1, 
-        "resp_header": {},
         "parser": nope_parser, 
         "start": 0,
         "retry": 0,
         "status": STATUS_SEND,
+        "redirect": 0,
         "con": None,
+        "chain": None,
+        "chain_idx": 0,
+        "ssl": False,
         } 
     for k,v in copy.items():
         if k not in task:
             task[k] = v
+    if task["redirect"] and "urlsset" not in task:
+        task["urlsset"] = {task["url"]: 1} 
+    if task.get("chain") and not task.get("chain_idx"):
+        task["chain_idx"] = 1
+    return task
 
 
 def preset_dns(task_list): 
@@ -807,16 +928,17 @@ def preset_dns(task_list):
         dns_buffer[remote] = addrs[0][-1] 
 
 
+
 def log_with_time(msg):
-    print u"async_http %s: %s" % (time.ctime(), repr(msg)) 
+    print "async_http %s: %s" % (time.ctime(), repr(msg)) 
 
 
 
 def dispatch_tasks(task_list): 
     g["ep"] = epoll() 
     #补全任务缺少的
-    for i in task_list: 
-        fill_task(i) 
+    for i,v in enumerate(task_list): 
+        task_list[i] = fill_task(v) 
     #初始化任务管理 
     preset_dns(task_list)
     space = config["limit"]
@@ -829,12 +951,8 @@ def dispatch_tasks(task_list):
                 tasks[random] = i 
                 break
         i["random"] = random 
-        if space > 0:
-            try:
-                connect_remote(i)
-            except ValueError as e: 
-                remove_task(i, why="连接时buffer失效")
-                continue
+        if space > 0: 
+            connect_remote(i) 
             space -= 1 
     run_async(ep) 
     fcnt = len(failed_tasks) 
@@ -853,26 +971,35 @@ def repeat_tasks(task_list):
         items = failed_tasks.items()
         failed_tasks = {}
         for key,v in items: 
-            if v["retry"] > config["retry_limit"]:
-                del failed_tasks[key]
+            if v["retry"] > config["retry_limit"]: 
                 continue
-            t = default_copy(v)
-            v["retry"] += 1
+            v["retry"] += 1 
+            t = default_copy(v) 
             ret.append(t)
         dispatch_tasks(ret) 
 
 
 
+def batch_request(urls, parser):
+    tasks = []
+    for i in urls:
+        tasks.append({
+            "url": i,
+            "parser": parser,
+            })
+    repeat_tasks(tasks) 
+
+
+
 def insert_task(task):
-    task = default_copy(task)
-    fill_task(task)
+    task = default_copy(task) 
+    task = fill_task(task) 
     while True:
         random = get_random()
         if random not in tasks: 
             tasks[random] = task
             break
     task["random"] = random 
-
 
 
 def wait_timeout(n): 
@@ -883,17 +1010,21 @@ def wait_timeout(n):
     signal.signal(signal.SIGALRM, internal_timer)
 
 
-
 def debug_parser(task):
-    pprint.pprint(task["resp_header"]) 
-
-
+    pprint.pprint(task["res_header"]) 
 
 
 def sigusr1(signum, frame):
-    pdb.set_trace()
-
+    pdb.set_trace() 
 
 
 import signal
 signal.signal(signal.SIGUSR1, sigusr1) 
+
+
+def chain_next(task):
+    chain = task["chain"]
+    idx = task["chain_idx"]
+    if idx < len(chain): 
+        task["chain_idx"] += 1
+        return chain[idx] 

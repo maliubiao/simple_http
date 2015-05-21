@@ -41,56 +41,79 @@ def post(url, **kwargs):
     return request(url, method=METHOD_POST, **kwargs) 
 
 
+
 def request(url, **kwargs): 
     redirect = kwargs.get("redirect", 1)
     assert redirect > 0
     new_url = url 
-    urlset = set()
+    urlset = {new_url: 1} 
     while redirect:
         redirect = redirect - 1 
-        if new_url in urlset:
+        if urlset[new_url] > 2: 
             raise socket.error("endless redirect")
-        header, body = do_request(new_url, **kwargs)
-        urlset.add(url)
-        status = header["status"]
+        res = do_request(new_url, **kwargs)
+        res["url"] = new_url
+        cookie = res.get("cookie")
+        if "cookie" not in kwargs:
+            kwargs["cookie"] = {}
+        if cookie:
+            kwargs["cookie"].update(get_cookie(cookie))
+        header = res["header"] 
+        status = res["status"]
         if status == 301 or status == 302:
             new_url = header.get("Location", header.get("location")) 
         else:
-            break
-        print "redirect to", new_url
-    return header, body 
+            break 
+        print "redirect to", new_url 
+        if new_url in urlset:
+            urlset[new_url] += 1
+        else:
+            urlset[new_url] = 1 
+    return res
+
 
 
 def do_request(url, **kwargs): 
-    request_list = [] 
-    urld = urlparse(url) 
+    request = generate_request(url, **kwargs)
+    return send_http(request) 
+
+
+            
+def generate_request(url, **kwargs): 
+    rl = [] 
+    url_parts = urlparse(url) 
     #http basic authorization 
-    basicauth = basic_auth(urld.get("user"), urld.get("password")) 
-    if "user" in urld:
-        del urld["user"]
-    if "password" in urld:        
-        del urld["password"] 
+    basicauth = basic_auth_msg(url_parts.get("user"), url_parts.get("password")) 
+    if "user" in url_parts:
+        del url_parts["user"]
+    if "password" in url_parts:        
+        del url_parts["password"] 
     proxy = kwargs.get("proxy", "")
     if proxy:
-        pauth = proxy_auth(proxy)
+        pauth = proxy_auth_msg(proxy)
     else:
         pauth = None 
-    #maybe ssl
-    use_ssl, port = get_schema(urld) 
+    #maybe ssl 
+    port = int(url_parts.get("port", 80)) 
+    use_ssl = False
+    if url_parts.get("schema") == "https": 
+        use_ssl = True
+        port = 443
+        if not has_ssl:
+            raise socket.error("Unsupported schema") 
     #handle query string
     if kwargs.get("query"):
-        urld["query"] = generate_query(kwargs["query"]) 
-    host = urld["host"] 
+        url_parts["query"] = generate_query(kwargs["query"]) 
+    host = url_parts["host"] 
     #http proxy: remove schema://host:port 
     if proxy.startswith("http"):
-        urld["schema"] = "http"
+        url_parts["schema"] = "http"
     else: 
-        del urld["host"] 
-        if "schema" in urld:
-            del urld["schema"] 
-        if "port" in urld:
-            port = int(urld["port"])
-            del urld["port"] 
+        del url_parts["host"] 
+        if "schema" in url_parts:
+            del url_parts["schema"] 
+        if "port" in url_parts: 
+            del url_parts["port"] 
     if not kwargs.get("header"):
         header = default_header.copy() 
     else:
@@ -103,39 +126,47 @@ def do_request(url, **kwargs):
         content = generate_post(header, kwargs["payload"]) 
         header["Content-Length"] = str(len(content)) 
     #reuqest path
-    path = generate_url(urld) 
+    path = generate_url(url_parts) 
     method= kwargs.get("method", METHOD_GET) 
     #for basic authorization 
     if basicauth: header["Authorization"] = basicauth 
     #for basic proxy authorization
     if pauth: header["Proxy-Authorization"] = pauth
-    request_list.append(generate_client_header(header, method, path)) 
+    rl.append(generate_request_header(header, method, path)) 
     #generate cookie and HEADER_END
     if kwargs.get("cookie"):
-        request_list.append("Cookie: ")    
-        request_list.append(generate_cookie(kwargs["cookie"])) 
-        request_list.append(HEADER_END) 
+        rl.append("Cookie: ")    
+        rl.append(generate_cookie(kwargs["cookie"])) 
+        rl.append(HEADER_END) 
     else:
-        request_list.append("\r\n") 
+        rl.append("\r\n") 
     if kwargs.get("method") in (METHOD_PUT, METHOD_POST):
-        request_list.append(content)
+        rl.append(content)
     #args for send_http
-    body = "".join(request_list)       
+    body = "".join(rl)       
     remote = kwargs.get("remote", (host, port)) 
-    return send_http(remote, use_ssl, body, 
-            kwargs.get("timeout", default_timeout),
-            proxy, kwargs.get("header_only", False))
+    return {
+            "body": body,
+            "remote": remote,
+            "ssl": use_ssl,
+            "timeout": kwargs.get("timeout", default_timeout),
+            "proxy": proxy,
+            "header_only": kwargs.get("header_only", False),
+            }
 
-            
 
-def handle_chunked(cbuf, normal_stream): 
-    end = cbuf.tell()
-    cbuf.seek(0)
-    goout = 0
+def decode_chunk_stream(response): 
+    goout = False
+    b = response["chunked_b"]
+    recv = response["recv"]
+    done = False 
+    recv_end = recv.tell() 
+    recv.seek(response["chunked_idx"], io.SEEK_SET) 
     while True: 
+        back_idx = recv.tell()
         num = "" 
         while True: 
-            char = cbuf.read(1) 
+            char = recv.read(1) 
             if not char:
                 goout = True
                 break 
@@ -144,93 +175,79 @@ def handle_chunked(cbuf, normal_stream):
             num += char 
         if goout:
             break
-        cbuf.seek(1, io.SEEK_CUR)
-        x = int(num, 16)
+        recv.seek(1, io.SEEK_CUR)
+        x = int(num, 16) 
         if not x:
+            done = True
             break
-        chunk = cbuf.read(x)
-        cbuf.seek(2, io.SEEK_CUR)
+        chunk = recv.read(x) 
         if len(chunk) != x:
+            recv.seek(back_idx, io.SEEK_SET)
             break
-        normal_stream.write(chunk) 
+        recv.seek(2, io.SEEK_CUR)
+        b.write(chunk) 
+    response["chunked_idx"] = recv.tell()
+    recv.seek(recv_end, io.SEEK_SET) 
+    if done:
+        response["recv"] = response["chunked_b"]
+        del response["chunked_b"] 
+        del response["chunked_idx"] 
+    return done
 
 
-def wait_header(data, hbuf): 
-    hbuf.write(data)
-    hdr = hbuf.getvalue()
-    skip = 0 
-    hend = hdr.find(HEADER_END) 
-    if hend < 0: 
-        hend = hdr.find(HEADER_END2)
-        if hend < 0:
-            #slow network, wait for header 
-            return None, None 
-        else:
-            skip = 2
+
+def parse_header(response):
+    recv = response["recv"]
+    data = recv.getvalue()
+    idx = data.find(HEADER_END)
+    if not idx:
+        data.find(HEADER_END2)
+        skip = 2
     else:
-        skip = 4 
-    header = parse_server_header(hdr[:hend]) 
-    return header, hdr[hend+skip:] 
+        skip = 4
+    if not idx:
+        return 
+    recv.truncate(0)
+    recv.write(data[idx+skip:])
+    status, cookie, header = parse_response_header(data[:idx]) 
+    response.update(status)
+    response["cookie"] = cookie
+    response["header"] = header
+    if "Content-Length" in header:
+        response["total_length"] = int(header["Content-Length"]) 
+    if header.get("Transfer-Encoding") == "chunked":
+        response["chunked"] = True
+        response["chunked_b"] = cStringIO.StringIO()
+        response["chunked_idx"] = 0 
+    return header
 
 
-
-def wait_response(remote, header_only=False):
-    total_length = 0xffffffff 
-    chunked = False 
+def wait_response(request): 
     has_header = False 
-    has_range = False 
-    length_unkown = False 
+    recv = cStringIO.StringIO() 
+    remote = request["sock"]
     header = None 
-    hbuf = cStringIO.StringIO()
-    cbuf = cStringIO.StringIO() 
+    response = {"recv": recv} 
     while True: 
         data = remote.recv(40960) 
         #remote closed
         if not data: 
             break 
+        recv.write(data) 
         if not has_header: 
-            header, data = wait_header(data, hbuf)
-            #again
+            header = parse_header(response)
             if not header:
                 continue 
-            if header_only: 
-                break
-            if "Content-Length" in header:
-                total_length = int(header["Content-Length"])
-            else:
-                length_unkown = True 
-            #maybe chunked stream 
-            if header.get("Transfer-Encoding") == "chunked": 
-                chunked = True 
-            if header.get("Accept-Ranges") == "bytes":
-                has_range = True 
-            if header.get("Content-Range"):
-                length_unkown = False 
-            has_header = True 
-            if (not chunked and 
-                not has_range and 
-                length_unkown and
-                not data and
-                header["status"] == 200):
-                #no idea how this stream ends, wait
-                continue 
-        cbuf.write(data) 
-        #handle chunked data
-        if chunked:
-            chunked_end = data.rfind("0\r\n\r\n")
-            if chunked_end < 0 or data[chunked_end-1].isdigit(): 
-                continue
-            cbuf.getvalue() 
-            normal = cStringIO.StringIO()
-            handle_chunked(cbuf, normal) 
-            cbuf.close() 
-            return header, normal.getvalue() 
-        #Content-Length
-        if cbuf.tell() >= total_length: 
+            if request["header_only"]: 
+                break 
+            has_header = True
+        if response.get("chunked") and decode_chunk_stream(response): 
+            break 
+        if recv.tell() >= response.get("total_length", 0xffffffff): 
             break 
     if not header:
-        raise socket.error("remote error: %s:%d" % remote.getpeername())
-    return header, cbuf.getvalue() 
+        raise socket.error("remote error: %s:%d" % remote.getpeername()) 
+    return response
 
 
 
@@ -249,110 +266,66 @@ def connect_sock5(sock, remote, server):
     #if request failed
     if not sock.recv(12).startswith("\x05\x00"): 
         sock.close()
-        raise socket.error("proxy network error")
-
+        raise socket.error("unexpected response packet") 
 
 
 
 def connect_proxy(sock, remote, proxy): 
     proxy_type = None
-    proxyd = urlparse(proxy)
-    schema = proxyd["schema"]
+    url_parts = urlparse(proxy)
+    schema = url_parts["schema"]
     if schema in "https": 
         proxy_type = "http"
-        sock.connect((proxyd["host"], int(proxyd["port"])))
+        sock.connect((url_parts["host"], int(url_parts["port"])))
     elif schema == "socks5": 
         proxy_type = "socks5"
-        connect_sock5(sock, remote, (proxyd["host"], int(proxyd["port"]))) 
+        connect_sock5(sock, remote,
+            (url_parts["host"], int(url_parts["port"]))) 
     else:
         raise socket.error("unknown proxy type")
     return proxy_type 
 
 
-#connection pool
-sconf =  {} 
-session = {}
 
-
-def connect(remote): 
-    sock = socket.socket(socket.AF_INET, 
-            socket.SOCK_STREAM)
-    sock.connect(remote) 
-    return sock
-
-
-def get_sock(remote): 
-    host = "%s:%d" % remote 
-    #检测一下socket是否已经关闭 
-    sock = session[host].pop() 
-    #send_http会恢复这个标志
-    sock.setblocking(0) 
-    try: 
-        x = sock.recv(1) 
-        sock = connect(remote)
-    except socket.error as e:
-        if e.errno != errno.EAGAIN: 
-            sock = connect(remote) 
-    return sock
+def send_tcp(sock, message): 
+    remain = message
+    while True:
+        idx = sock.send(remain) 
+        if idx == len(remain):
+            break
+        remain = remain[idx:]
 
 
 
-def session_pool(remote): 
-    #如果配置了连接池 
-    host = "%s:%d" % remote 
-    if host in sconf: 
-        #如果池里有项
-        if host in session:
-            #如果有可用的
-            if len(session[host]):
-                sock = get_sock(remote)
-            #没有则新建
-            else:
-                sock = connect(remote)
-        #如果池里没有则新建
-        else: 
-            sock = connect(remote)
-            session[host] = []
-    #没有配置连接池只用一次
-    else:
-        sock = connect(remote)
-    return sock
-
-
-
-def send_http(remote, use_ssl, message, timeout, proxy=None, header_only=False): 
+def send_http(request): 
     #if there is a proxy , connect proxy server instead 
     proxy_type = None 
-    if proxy: 
-        #用代理则先连接代理服务器
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
-        proxy_type = connect_proxy(sock, remote, proxy)
+    remote = request["remote"] 
+    sock = socket.socket(socket.AF_INET, 
+            socket.SOCK_STREAM) 
+    if request["proxy"]: 
+        #用代理则先连接代理服务器 
+        proxy_type = connect_proxy(sock, remote, request["proxy"])
     else: 
-        sock = session_pool(remote)
-    sock.settimeout(timeout) 
+        sock.connect(remote) 
+    sock.settimeout(request["timeout"]) 
     #用代理不能封闭ssl
-    if use_ssl and proxy_type != "http":
+    if request["ssl"] and proxy_type != "http":
         sock = ssl.wrap_socket(sock) 
+    request["sock"] = sock
     #略粗暴，可能发不全
-    sock.send(message) 
-    header, body = wait_response(sock, header_only) 
+    send_tcp(sock, request["body"]) 
+    response = wait_response(request)
     #如果需要缓存连接则添加到队列， 否则直接关闭连接
-    host = "%s:%d" % remote
-    if (not proxy and
-            sock and
-            header and
-            host in sconf and
-            host in session and 
-            len(session[host]) < sconf[host]):
-        #出错的不会被再添加 
-        session[host].append(sock) 
-    else:
-        sock.close() 
-    #handle compressed stream: gzip, deflate 
-    if not header_only and header: 
+    host = "%s:%d" % remote 
+    header = response["header"] 
+    text = response["recv"].getvalue() 
+    del response["recv"] 
+    if not request.get("header_only") and header: 
         #maybe gzip stream
         if header.get("Content-Encoding") == "gzip": 
-            body = zlib.decompress(body, 16+zlib.MAX_WBITS)  
+            text = zlib.decompress(text, 16+zlib.MAX_WBITS)  
         elif header.get("Content-Encoding") == "deflate":
-            body = zlib.decompress(body, -zlib.MAX_WBITS)  
-    return header, body 
+            text = zlib.decompress(text, -zlib.MAX_WBITS)  
+    response["text"] = text
+    return response

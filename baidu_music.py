@@ -19,8 +19,8 @@ def get_songlink(songid):
     p = {
             "songids": songid
             } 
-    h, c = simple_http.post("http://play.baidu.com/data/music/songlink", payload = p) 
-    for i in json.loads(c)["data"]["songList"]:
+    res = simple_http.post("http://play.baidu.com/data/music/songlink", payload = p) 
+    for i in json.loads(res["text"])["data"]["songList"]:
         if not i["songName"]:
             continue
         ret.append((i["songName"], i["songLink"])) 
@@ -48,38 +48,36 @@ def get_songids(uid):
                 "ting_uid": uid,
                 "order": "hot"
                 } 
-        h, c =simple_http.get("http://music.baidu.com/data/user/getsongs", query=query); 
-        if h["status"] != 200:
+        res =simple_http.get("http://music.baidu.com/data/user/getsongs", query=query); 
+        if res["status"] != 200:
             break
-        t = json.loads(c)["data"]["html"] 
+        t = json.loads(res["text"])["data"]["html"] 
         tree = etree.HTML(t)
         result = [x for x in tree.xpath(SONGID_XPATH)] 
         if not result:
             break 
-        for i in result:
-            if not "class" in i.attrib:
+        for i in result: 
+            if i.attrib.get("class"):
+                continue 
+            link = ID_PATTERN.match(i.attrib["href"])
+            if link:
                 ret.append((i.attrib["title"],
-                    ID_PATTERN.match(i.attrib["href"]).groups()[0])) 
+                    link.groups()[0])) 
     return ret
 
 def download_link(name, link): 
-    h, c = simple_http.get(link, header=simple_http.download_header)
-    if h["status"] != 200:
-        if h["status"] == 302:
-            h, c = simple_http.get(h["Location"], header=simple_http.download_header)
-            if h["status"] != 200:
-                pdb.set_trace() 
+    res = simple_http.get(link, header=simple_http.download_header, redirect=10) 
     f = open(name, "wb+")
-    f.write(c)
+    f.write(res["text"])
     f.close() 
 
 def download_album(aid): 
-    header, content = simple_http.get("http://music.baidu.com/album/%s" % aid)
-    if header["status"] != 200:
+    res = simple_http.get("http://music.baidu.com/album/%s" % aid)
+    if res["status"] != 200:
         print "failed"
-        print header
+        print res
         exit(1)
-    t = etree.HTML(content)
+    t = etree.HTML(res["text"])
     songs = []
     for i in t.xpath(ALBUM_XPATH):
         songs.append((i.attrib["title"], i.attrib["href"])) 
@@ -90,7 +88,7 @@ def download_album(aid):
         print "===================\n[%d/%d]: %s\n%s" % (i+1, len(songs), link[0], link[1]) 
 
 
-def download_by_id(songid):
+def download_by_id(songid): 
     try:
         link = get_songlink(songid)[0] 
     except IndexError: 

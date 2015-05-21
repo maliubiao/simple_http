@@ -237,33 +237,20 @@ def set_boundary(uid):
     g["FORM_SIMPLE_TYPE"] = "application/x-www-form-urlencoded"
     g["FORM_COMPLEX_TYPE"] = "multipart/form-data; boundary=%s" % BOUNDARY 
 
+
 set_boundary(uuid4().hex)
 
-def basic_auth(user, password):
+def basic_auth_msg(user, password):
     if user and password:
         return "Basic %s" % base64.b64encode("%s:%s" % (user, password)) 
     if user:
         return "Basic %s" % base64.b64encode(user) 
 
 
-def proxy_auth(proxy): 
+def proxy_auth_msg(proxy): 
     proxyd = urlparse(proxy) 
     if proxyd["schema"] == "http": 
-        return basic_auth(proxyd.get("user"), proxyd.get("password")) 
-
-
-def get_schema(urld): 
-    use_ssl = False
-    if "schema" in urld:
-        if urld["schema"] == "https":
-            use_ssl = True 
-    if use_ssl:
-        if not has_ssl: 
-            raise socket.error("Unsupported schema")
-        port = 443 
-    else:
-        port = 80 
-    return use_ssl, port
+        return basic_auth_msg(proxyd.get("user"), proxyd.get("password")) 
 
 
 def generate_query(query): 
@@ -460,16 +447,6 @@ def urlparse(url):
     return d
 
 
-
-def client_cookie(setcookie):
-    ret = {}
-    for cookie in setcookie:
-        key, value = cookie["cookie"].split("=")
-        ret[key] = value 
-    return ret
-
-
-
 def generate_cookie(cookie):
     ret = []
     has_unicode = False
@@ -491,6 +468,7 @@ def parse_cookie(cookie):
     return cd
 
 
+
 def generate_setcookie(cl):
     ret = []
     for cd in cl:
@@ -502,15 +480,20 @@ def generate_setcookie(cl):
                 item_list.append('%s=%s; ' % (k, v))
         ret.append("".join(items_list)[:-2])
         ret.append("\r\n") 
-    return "".join(ret)[:-2]
+    return "".join(ret)[:-2] 
 
 
-def parse_setcookie(string): 
-    cl = [] 
-    for line in string.split("\r\n"):
-        cookie = {}
-        lines = line.split(";")
-        cookie["cookie"] = lines[0]
+
+def parse_setcookie(data): 
+    cl = {} 
+    for line in data.split("\r\n"): 
+        lines = line.split(";") 
+        cookie = {} 
+        vl = lines[0]
+        idx = vl.find("=")
+        name = vl[:idx]
+        value = vl[idx+1:] 
+        cookie["value"] = value
         for part in lines[1:]: 
             kv = part.split("=")
             #path=/ or httponly 
@@ -519,83 +502,53 @@ def parse_setcookie(string):
                 cookie[key] = kv[1]
             else: 
                 cookie[key] = True
-        cl.append(cookie)
+        cl[name] = cookie 
     return cl
 
 
-def parse_simple_post(string):
+def get_cookie(cookies):
+    c =  {}
+    for key, value in cookies.items():
+        c[key] = value["value"]
+    return c
+
+
+
+def parse_simple_post(data):
     post_dict = {}
-    for i in string.split("&"): 
+    for i in data.split("&"): 
         k,v = i.replace("+", " ").split("=") 
         post_dict[unquote_plus(k)] = unquote_plus(v)
     return post_dict
 
 
-#fix this
-def parse_complex_post(string, boundary):
-    post_dict = {} 
-    boundary_end = string.rfind("--%s--\r\n" % boundary)
-    if boundary_end < 0:
-        raise Exception("no boundary end") 
-    #skip boundary end
-    for item in string[:boundary_end].split("--%s\r\n" % boundary)[1:]:     
-        header, content = item.split(HEADER_END) 
-        kv = header.split("; ")
-        if "Content-Disposition" not in kv[0]:
-            raise Exception("no Content-Disposition")
-        k = kv[1].split("=")[1] 
-        #content header
-        post_dict[k] = { 
-                "content": content
-                } 
-        #form name
-        if len(kv) == 2: 
-            #maybe Content-Type 
-            if "\r\n" in kv[-1]: 
-                ch = {}
-                for j in kv[-1].split("\r\n"):
-                    chk, chv = j.split(": ")
-                    ch[unquote_plus(chk)] = unquote_plus(chv.strip('"'))
-                post_dict[k]["header"] = ch 
-        #form file
-        elif len(kv) == 3: 
-            if "\r\n" in kv[2]: 
-                ch = {}
-                fn = kv[-1].split("\r\n")
-                for j in fn[1:]:
-                    chk, chv = j.split(": ")
-                    ch[chk] = chv.strip('"')
-                post_dict[k]["header"] = ch 
-                post_dict[k]["filename"] = fn[0].split("=")[1].strip('"')
-    return post_dict 
 
-
-def generate_client_header(header, method, path): 
+def generate_request_header(header, method,  path): 
     sl = "%s %s %s\r\n" % (method, path, HTTP_VERSION) 
-    b = []
+    b = [sl]
     for k, v in header.items():
         b.append("%s: %s\r\n" % (k, v)) 
-    return sl + "".join(b)
+    return "".join(b)
 
 
 
-def generate_server_header(header, status):
+def generate_response_header(header, status):
     sl = "%s %s\r\n" % (HTTP_VERSION, resp_codes["status"]) 
-    b = []
+    b = [sl]
     for k, v in header.items():
         b.append("%s: %s\r\n" % (k, v)) 
-    return sl + "".join(b) 
+    return "".join(b) 
 
 
 
-
-def parse_client_header(string):
-    parts = string.split("\r\n")
-    status = parts[0].split(" ") 
-    sd = {}
-    sd["method"] = status[0] 
-    sd["path"] = status[1] 
-    sd["protocol"] = status[-1] 
+def parse_request_header(text):
+    parts = text.split("\r\n")
+    status_parts = parts[0].split(" ") 
+    status = {
+            "method": status_parts[0],
+            "path": status_parts[1],
+            "protocol": status_parts[-1] 
+            } 
     header = {}
     last = None
     for line in parts[1:]: 
@@ -609,19 +562,22 @@ def parse_client_header(string):
             continue
         last = kv
         header[kv[0]] = kv[1] 
-    header.update(sd) 
-    if "Cookie" in header:
-        header["Cookie"] = parse_cookie(header["Cookie"]) 
-    return header
+    cookie = header.get("Cookie", {})
+    if cookie:
+        del header["Cookie"]
+        cookie = parse_cookie(cookie)
+    return status, cookie, header
 
 
-def parse_server_header(string):    
-    parts = string.split("\r\n")
-    status = parts[0].split(" ") 
-    sd = {} 
-    sd["protocol"] = status[0] 
-    sd["status"] = int(status[1]) 
-    sd["message"] = " ".join(status[2:]) 
+
+def parse_response_header(text):    
+    parts = text.split("\r\n")
+    status_parts = parts[0].split(" ") 
+    status = { 
+            "protocol": status_parts[0], 
+            "status": int(status_parts[1]),
+            "message": " ".join(status_parts[2:])
+            } 
     header = {}
     last = None 
     for line in parts[1:]: 
@@ -639,9 +595,11 @@ def parse_server_header(string):
             header[key] += "\r\n" + kv[1]
         else:
             header[kv[0]] = kv[1] 
-    header.update(sd) 
-    if "Set-Cookie" in header:
-        header["Set-Cookie"] = parse_setcookie(header["Set-Cookie"]) 
-    if "Set-Cookie2" in header:
-        header["Set-Cookie2"] = parse_setcookie(header["Set-Cookie2"]) 
-    return header 
+    cookie = {}
+    cookie1 = header.get("Set-Cookie")
+    if cookie1:
+        cookie.update(parse_setcookie(cookie1))
+    cookie2 = header.get("Set-Cookie2")
+    if cookie2:
+        cookie.update(parse_setcookie(cookie2)) 
+    return status, cookie, header 

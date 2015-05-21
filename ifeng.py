@@ -21,10 +21,10 @@ xwjrt = "http://v.ifeng.com/vlist/tv/xwjrt/all/0/%d/detail.shtml"
 
 
 def do(url, n):
-    h, content = simple_http.get(url % n)
-    if h["status"] != 200:
+    res = simple_http.get(url % n) 
+    if res["status"] != 200:
         pdb.set_trace()
-    s = etree.HTML(content) 
+    s = etree.HTML(res["text"]) 
     videos = s.xpath(xpath) 
     for i in videos:
         print "%s\n%s" % (i.attrib["title"],  i.attrib["href"])

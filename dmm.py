@@ -57,7 +57,7 @@ skip_xpath = "/html/body/table/tr/td[2]/div/table/tr/td[1]/table/tr[10]/td[2]/a"
 def page_to_id(page):
     return int(page.split("=")[-1].strip("/")) 
 
-def utf8(s):
+def utf8(s): 
     return s.encode("utf8")
 
 def replace(pattern, src, sub):
@@ -65,8 +65,8 @@ def replace(pattern, src, sub):
     return src.replace(i, sub+i) 
 
 def get_author_list(category): 
-    h, c = simple_http.get(category, proxy=proxy)
-    t = etree.HTML(c)
+    res = simple_http.get(category, proxy=proxy)
+    t = etree.HTML(res["text"])
     urls = t.xpath(last)
     total = 0
     if len(urls) == 0:
@@ -79,9 +79,11 @@ def get_author_list(category):
         print utf8(i.xpath("string()"))
         print utf8(base+i.attrib["href"])
     for i in range(2, total+1):
-        h, c = simple_http.get(category + "/page=%d" % i, proxy=proxy)
-        t = etree.HTML(c)
+        res = simple_http.get(category + "/page=%d" % i, proxy=proxy)
+        t = etree.HTML(res["text"])
         for i in t.xpath(p):
+            if not i.text:
+                continue
             print utf8(i.xpath("string()"))
             print utf8(base+i.attrib["href"])
 
@@ -89,10 +91,10 @@ def get_author_list(category):
 def get_work_list(author_url):
     if not author_url:
         pdb.set_trace()
-    h, c = simple_http.get(author_url, proxy=proxy) 
-    if h["status"] != 200:
+    res = simple_http.get(author_url, proxy=proxy) 
+    if res["status"] != 200:
         pdb.set_trace()
-    t = etree.HTML(c)
+    t = etree.HTML(res["text"])
     urls = t.xpath(work_last) 
     total = 0
     ret = []
@@ -106,8 +108,8 @@ def get_work_list(author_url):
         [base+x.attrib["href"] for x in t.xpath(work_url)], 
         [x.text for x in t.xpath(author_name)])) 
     for i in range(2, total+1): 
-        h, c = simple_http.get(author_url + "page=%d/" % i, proxy=proxy)
-        t = etree.HTML(c)
+        res = simple_http.get(author_url + "page=%d/" % i, proxy=proxy)
+        t = etree.HTML(res["text"])
         ret.extend(zip([x.attrib["src"] for x in t.xpath(work_title2)],
             [base+x.attrib["href"] for x in t.xpath(work_url)], 
             [x.text for x in t.xpath(author_name)])) 
@@ -115,8 +117,8 @@ def get_work_list(author_url):
 
 
 def get_info(work_url): 
-    h, c = simple_http.get(work_url, proxy=proxy)
-    t = etree.HTML(c) 
+    res = simple_http.get(work_url, proxy=proxy)
+    t = etree.HTML(res["text"])
     tags = t.xpath(skip_xpath)
     for i in tags:
         if i.text == skip:
@@ -142,13 +144,13 @@ def get_info(work_url):
             }
 
 
-def get_category_dvd():
-    h, c = simple_http.get(dvd, proxy=proxy) 
-    t = etree.HTML(c)
+def get_category_dvd(): 
+    res = simple_http.get(dvd, proxy=proxy) 
+    t = etree.HTML(res["text"])
     urls = t.xpath(proun)
     for i in urls: 
         print utf8(i.text)
-        get_author_list(base+i.attrib["href"])
+        get_author_list(base+i.attrib["href"]) 
         
 #根据五十音生成
 def get_categroy_digital(): 
@@ -159,19 +161,19 @@ def get_categroy_digital():
         pages.extend(["%s=/keyword=%s/" % (digital_base, i+x) for x in p2]) 
     authors = [] 
     for i in pages:
-        h, c = simple_http.get(i, proxy=proxy)
-        t = etree.HTML(c) 
+        res = simple_http.get(i, proxy=proxy)
+        t = etree.HTML(res["text"]) 
         for i in t.xpath(p_digital) + t.xpath(ps_digital): 
+            if not i.text:
+                continue
             print utf8(i.xpath("string()"))
-            print utf8(i.attrib["href"])
+            print utf8(i.attrib.get("href"))
 
 
-def get_work_list_digital(author_url):
-    while True:
-        h, c = simple_http.get(author_url, proxy=proxy) 
-        if h["status"] == 200:
-            break 
-    t = etree.HTML(c) 
+
+def get_work_list_digital(author_url): 
+    res = simple_http.get(author_url, proxy=proxy, redirect=10) 
+    t = etree.HTML(res["text"]) 
     urls = t.xpath(p_work_last) 
     total = 0
     ret = []
@@ -184,11 +186,8 @@ def get_work_list_digital(author_url):
     ret.extend(zip([x.attrib["alt"] for x in t.xpath(p_work_title)],
         [x.attrib["href"] for x in t.xpath(p_work_url)])) 
     for i in range(2, total+1): 
-        while True:
-            h, c = simple_http.get(author_url + "page=%d/" % i, proxy=proxy) 
-            if h["status"] == 200:
-                break
-        t = etree.HTML(c)
+        res = simple_http.get(author_url + "page=%d/" % i, proxy=proxy) 
+        t = etree.HTML(res["text"])
         ret.extend(zip([x.attrib["alt"] for x in t.xpath(p_work_title)],
             [x.attrib["href"] for x in t.xpath(p_work_url)])) 
     return ret 
@@ -213,15 +212,15 @@ def down_pic(name, pic_url):
     print name, pic_url
     if os.path.exists(name):
         return 
-    h, c = simple_http.get(pic_url, proxy=proxy)
-    if h["status"] != 200:
+    res = simple_http.get(pic_url, proxy=proxy)
+    if res["status"] != 200:
         print "skip", pic_url
         return
     try:
         f = open(name, "wb+") 
     except IOError:
         f = open(name.split("-")[-1], "wb+")
-    f.write(c)
+    f.write(res["text"])
     f.close() 
 
 
@@ -236,6 +235,7 @@ def down_list_dvd(author_url):
             down_pic("%s-%s-cover.jpg" % (name, d["aid"]), d["cover"])
         for i,v in enumerate(d["pics"]):
             down_pic("%s-%s-%d.jpg" % (name, d["aid"], i), v) 
+
 
 if __name__ == "__main__": 
     import sys, argparse

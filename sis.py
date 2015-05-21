@@ -26,12 +26,12 @@ thread = {
         } 
 
 def down_one(title, url):
-    h, c = simple_http.get(url, proxy=proxy)
-    if not h:
+    res = simple_http.get(url, proxy=proxy)
+    if not res:
         return
-    if h["status"] != 200:
+    if res["status"] != 200:
         return
-    t = etree.HTML(c)
+    t = etree.HTML(res["text"])
     pics = t.xpath(image_xpath)
     torrent = [x for x in t.xpath(torrent_xpath) if x.attrib["href"].startswith("attach")] 
     for i,v in enumerate(pics):
@@ -41,52 +41,39 @@ def down_one(title, url):
         if not "jpg" in v.attrib["src"]:
             continue
         try:
-            h, c = simple_http.get(v.attrib["src"], proxy=proxy) 
+            res = simple_http.get(v.attrib["src"], proxy=proxy, redirect=10) 
         except socket.timeout:
-            continue
-        except socket.error:
-            continue
-        if h["status"] != 200:
-            if h["status"] == 302: 
-                location = h["Location"]
-                if not location.startswith("http"): 
-                    url = {}
-                    url["host"] = simple_http.urlparse(v.attrib["src"])["host"]
-                    url["path"] = location
-                    location = simple_http.generate_url(url)
-                h, c = simple_http.get(location, proxy=proxy) 
-                if h["status"] != 200:
-                    continue
-        if len(c) < 10240:
+            continue 
+        if len(res["text"]) < 10240:
             continue
         try:
             f = open(name.decode("utf-8"), "wb+")
         except IOError as e:
             print e
             continue
-        f.write(c)
+        f.write(res["text"])
         f.close()
     for i,v in enumerate(torrent):
         name = ("%s-%d.torrent" % (title, i)).replace("/", "-") 
         if os.path.exists(name):
             continue
-        h, c = simple_http.get(base+v.attrib["href"], proxy=proxy)
-        if h["status"] != 200:
+        res = simple_http.get(base+v.attrib["href"], proxy=proxy)
+        if res["status"] != 200:
             continue
         try:
             f = open(name.decode("utf-8"), "wb+")
         except IOError as e:
             print e
             continue
-        f.write(c)
+        f.write(res["text"])
         f.close() 
 
 
 def down_page(tid, pid): 
-    h, c = simple_http.get(thread_base % (tid, pid), proxy=proxy)
-    if h["status"] != 200:
+    res = simple_http.get(thread_base % (tid, pid), proxy=proxy)
+    if res["status"] != 200:
         return
-    t = etree.HTML(c) 
+    t = etree.HTML(res["text"]) 
     url = []
     if pid == 1:
         a = t.xpath(p1_xpath)                 

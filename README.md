@@ -1,45 +1,69 @@
-##一个简单好用的HTTP库, 支持标准的http方法
+##简单易用的同步/异步http库
+
+###同步方式
+
 ```shell
-In [4]: header, content = simple_http.get("https://github.com")
-In [5]: header
-Out[5]: 
-{'Cache-Control': 'max-age=0, private, must-revalidate',
- 'Content-Security-Policy': "default-src *; script-src assets-cdn.github.com www.google-analytics.com collector-cdn.github.com; object-src assets-cdn.github.com; style-src 'self' 'unsafe-inline' 'unsafe-eval' assets-cdn.github.com; img-src 'self' data:assets-cdn.github.com identicons.github.com www.google-analytics.com collector.githubapp.com *.githubusercontent.com *.gravatar.com *.wp.com; media-src 'none'; frame-src 'self' render.githubusercontent.com gist.github.com www.youtube.com player.vimeo.com checkout.paypal.com; font-src assets-cdn.github.com; connect-src 'self' ghconduit.com:25035 live.github.com uploads.github.com s3.amazonaws.com",
+In [1]: import simple_http
+
+In [2]: res = simple_http.get("https://github.com")
+
+In [4]: res["status"]
+Out[4]: 200
+
+In [5]: res["message"]
+Out[5]: 'OK'
+
+In [6]: res["protocol"]
+Out[6]: 'HTTP/1.1'
+
+In [7]: res["header"]
+Out[7]: 
+{'Cache-Control': 'no-cache',
+ 'Content-Security-Policy': "default-src *; script-src assets-cdn.github.com collector-cdn.github.com; object-src assets-cdn.github.com; style-src 'self' 'unsafe-inline' 'unsafe-eval' assets-cdn.github.com; img-src 'self' data:assets-cdn.github.com identicons.github.com www.google-analytics.com collector.githubapp.com *.githubusercontent.com *.gravatar.com *.wp.com; media-src 'none'; frame-src 'self' render.githubusercontent.com gist.github.com www.youtube.com player.vimeo.com checkout.paypal.com; font-src assets-cdn.github.com; connect-src 'self' live.github.com wss://live.github.com uploads.github.com status.github.com api.github.com www.google-analytics.com github-cloud.s3.amazonaws.com",
  'Content-Type': 'text/html; charset=utf-8',
- 'Date': 'Fri, 10 Oct 2014 13:46:09 GMT',
- 'ETag': '"37f568db7e0c51e3987492f601ac68d2"',
+ 'Date': 'Thu, 21 May 2015 15:38:29 GMT',
  'Server': 'GitHub.com',
- 'Set-Cookie': [{' HttpOnly': True,
-   ' path': '/',
-   ' secure': True,
-   'cookie': '_gh_sess=eyJzZXNzaW9uX2lkIjoiYmFmYzhiN2E4Yjk1YmQ3NmI0Y2UwMmI0NjRhNjU1MDUiLCJfY3NyZl90b2tlbiI6Ijl2TGNCUWdlODJIVS82UmFHSmp6ZlU2QUFETlFFalRnSTg0QUVnNUtWbms9In0%3D--19d5df32ed9b1662fc7526b563405c96204952bc'}],
+ 'Set-Cookie': 'logged_in=no; domain=.github.com; path=/; expires=Mon, 21 May 2035 15:38:29 -0000; secure; HttpOnly\r\n_gh_sess=eyJzZXNzaW9uX2lkIjoiNzk3MWNkZDEzZDJhOTA2NzZjYTEzYjExZDYxN2VhMjMiLCJfY3NyZl90b2tlbiI6IjZ0OENRUllFWjQ4NVlud2VGaC96aGVRbTBsZSs2K1FCVTJxcTdNSjlIM0E9In0%3D--1a2444a9b86de98df0ea2556dbc5644b239aa7b0; path=/; secure; HttpOnly',
  'Status': '200 OK',
  'Strict-Transport-Security': 'max-age=31536000; includeSubdomains; preload',
  'Transfer-Encoding': 'chunked',
  'Vary': 'Accept-Encoding',
  'X-Content-Type-Options': 'nosniff',
  'X-Frame-Options': 'deny',
- 'X-GitHub-Request-Id': 'DF418D9C:2C54:CC51D3:5437E321',
- 'X-Runtime': '0.008287',
- 'X-Served-By': 'b26767d88b31b8e1e88f61422786ec5e',
+ 'X-GitHub-Request-Id': '774ED627:7040:139FB8B:555DFBF4',
+ 'X-Request-Id': 'c23d860f8a94048323f1185a15176c13',
+ 'X-Runtime': '0.007538',
+ 'X-Served-By': '63914e33d55e1647962cf498030a7c16',
  'X-UA-Compatible': 'IE=Edge,chrome=1',
- 'X-XSS-Protection': '1; mode=block',
- 'message': 'OK',
- 'protocol': 'HTTP/1.1',
- 'status': 200} 
+ 'X-XSS-Protection': '1; mode=block'
 
-In [6]: pprint.pprint(content[:1024])
-'<!DOCTYPE html>\n<html>\n  <head prefix="og: http://ogp.me/ns# fb: http://ogp.me/ns/fb# githubog: http://ogp.me/ns/fb/githubog#">\n    <meta charset=\'utf-8\'>\n    <meta http-equiv="X-UA-Compatible" content="IE=edge">\n        <title>GitHub \xc2\xb7 Build software better, together.</title>\n    <link rel="search" type="application/opensearchdescription+xml" href="/opensearch.xml" title="GitHub" />\n    <link rel="fluid-icon" href="https://github.com/fluidicon.png" title="GitHub" />\n    <link rel="apple-touch-icon" sizes="57x57" href="/apple-touch-icon-114.png" />\n    <link rel="apple-touch-icon" sizes="114x114" href="/apple-touch-icon-114.png" />\n    <link rel="apple-touch-icon" sizes="72x72" href="/apple-touch-icon-144.png" />\n    <link rel="apple-touch-icon" sizes="144x144" href="/apple-touch-icon-144.png" />\n    <link rel="logo" type="image/svg" href="https://github-media-downloads.s3.amazonaws.com/github-logo.svg" />\n    <meta property="og:image" content="https://github.global.ssl.fastly.net/images/modules/logos_page/O'
+In [8]: res["text"][:100]
+Out[8]: '<!DOCTYPE html>\n<html lang="en" class="">\n  <head prefix="og: http://ogp.me/ns# fb: http://ogp.me/ns'
 ``` 
-###返回头部 
-header["status"] 是状态码   
-header["message"] 是message   
-header["protocol"] 是协议   
-它们跟其它头混到在一个字典里, 因为没有区分的必要   
+###自动重定向
+```shell
+In [9]: simple_http.get("http://baidu.com")
+redirect to https://www.baidu.com/
+Out[9]: 
+{'cookie': {},
+ 'header': {'Cache-Control': 'private',
+  'Connection': 'Keep-Alive',
+  'Content-Length': '160',
+  'Content-Type': 'text/html',
+  'Date': 'Thu, 21 May 2015 15:44:46 GMT',
+  'Expires': 'Fri, 22 May 2015 15:44:46 GMT',
+  'Location': 'https://www.baidu.com/',
+  'Server': 'bfe/1.0.8.2'},
+ 'message': 'Moved Temporarily',
+ 'protocol': 'HTTP/1.1',
+ 'status': 302,
+ 'text': '<html>\r\n<head><title>302 Found</title></head>\r\n<body bgcolor="white">\r\n<center><h1>302 Found</h1></center>\r\n<hr><center>bfe/1.0.8.2</center>\r\n</body>\r\n</html>\r\n',
+ 'total_length': 160,
+ 'url': 'http://baidu.com'}
+``` 
 
 ###使用不同的header
 默认情况下simple_http使用firefox的User-Agent, 
-请注意此库不会把参数里的其它类型自动转化为str, 用其它类型会直接报错
 ```shell
 myheader = {
 	"Accept": ...
@@ -55,13 +79,8 @@ simple_http.get("https://github.com", cookie=cookie)
 ```
 ###从header里取Cookie用
 ```shell
-simple_http.client_cookie(header["Set-Cookie"])
-从
-{' path': '/', ' secure': True, 'cookie': '_gh_sess=eyJzZXNzaW9uX2lkIjoiYTU5YTVhMmNjMTE1M2Y2ODU5MDczNjlmNGMzYWVmY2YiLCJfY3NyZl90b2tlbiI6IlVRUy8wdjkycnFhL2R0SGk1NVlkaDQ4d0lnSmljUEYwQzNOSWlGaG50bjQ9In0%3D--177119b094b3292c35f1573c8bd18a41fe8807ef', ' HttpOnly': True}
-转换到
-{
-	"_gh_sess": "...."
-}
+simple_http.get_cookie(res["cookie"]) 
+
 ```
 ###GET请求添加参数
 ```shell
@@ -85,7 +104,7 @@ payload = {
 simple_http.post("https://google.com", payload=payload)
 ``` 
 
-###使用代理 HTTP and SOCKS5
+###使用代理
 ####Socks5
 ```shell 
 In [8]: simple_http.get("https://google.com", proxy='socks5://127.0.0.1:8888')
@@ -129,58 +148,59 @@ Out[46]:
  '<HTML><HEAD><meta http-equiv="content-type" content="text/html;charset=utf-8">\n<TITLE>301 Moved</TITLE></HEAD><BODY>\n<H1>301 Moved</H1>\nThe document has moved\n<A HREF="https://www.google.com/">here</A>.\r\n</BODY></HTML>\r\n')
 ```
 
-##etree_utils.py是用于快速确定xpath的工具
-lxml配合xpath是解析网页内容的最佳方案   
-因为浏览器会动态修改DOM，从节点树取得xpath经常不能用.    
-主要是辅助快速确定目标的xpath
-1. a 指tag选择器  
-2. .attrib-value 是属性选择器  
-3. -value 是节点text选择器
-4. >是行选择器   
-python file selector
-value可以是正则表达式 
-
-
-##encryped_client/server是SOCKS5转发代理 
-1. 通过python simple_table.py得到key
-2. 要使用先自己修改代码里的端口与服务器地址等配置信息
-3. 两者都采用异步非阻塞的高效实现, 在本机测试时cpu从来没有过1%.
-4. 加密机制是随机密码表, 转换效率非常高
-5. encrypted_server.py与key放到墙外, encrypted_client.py与key放到本地 
-
-
-
-##http模拟器, 多进程并发模拟浏览器操作
+###异步方式
 ```shell 
-$python http_request_simulator.py "weibo.com"
-=========
-page done: weibo.com
-timeout: 3s
-=========
-url done: http://tp4.sinaimg.cn/1693146987/50/0/0
-url done: http://tp4.sinaimg.cn/2669568935/50/0/0
-url done: http://tp1.sinaimg.cn/1724196104/50/0/0
-url done: http://tp4.sinaimg.cn/1774814087/50/0/0
-url done: http://tp4.sinaimg.cn/1736031115/50/0/0
-url done: http://tp3.sinaimg.cn/1707759510/50/0/0
-url done: http://tp4.sinaimg.cn/2642032423/50/0/0
-url done: http://tp4.sinaimg.cn/1730725935/50/0/0
-url done: http://tp4.sinaimg.cn/1242716987/50/0/0
-url done: http://tp4.sinaimg.cn/1488834727/50/0/0
-url done: http://tp3.sinaimg.cn/1871599514/50/0/0
-url done: http://tp4.sinaimg.cn/1727873155/50/0/0
-url done: http://tp1.sinaimg.cn/1886832164/50/0/0
-url done: http://tp1.sinaimg.cn/1589797232/50/0/0
-url done: http://tp1.sinaimg.cn/2441302392/50/0/0
-url done: http://img.t.sinajs.cn/t35/style/images/tlogin/botlogo.png
-url done: http://rs.sinajs.cn/mini.gif?t=w1&uids=1707759510,1759023505,1867565545,1724196104,2669568935,2441302392,1871599514,2642032423,1192428237
-url done: http://js.t.sinajs.cn/t35/miniblog/js/yunying_unlogin3.js?version=20131127172405
-url done: http://js.t.sinajs.cn/t35/miniblog/js/lang_zh.js?version=20131127172405
-url done: http://tp2.sinaimg.cn/1867565545/50/0/0
-url done: http://js.t.sinajs.cn/t35/miniblog/static/js/sso.js?v=20131127172405
-url done: http://tp2.sinaimg.cn/1192428237/50/0/0
-url done: http://i1.sinaimg.cn/unipro/pub/suda_m_v629.js
-url done: http://beacon.sina.com.cn/e.gif?noScript
-url done: http://tp2.sinaimg.cn/1759023505/50/0/0
-request done, kill 0 children
-``` 
+
+In [21]: def print_it(x):                                                              
+    import pprint
+   ....:     pprint.pprint(x)
+   ....:     
+
+In [22]: async_http.repeat_tasks([{"url": "http://www.baidu.com", "parser": print_it}])
+{'chain': None,
+ 'chain_idx': 0,
+ 'con': <socket._socketobject object at 0x2812bb0>,
+ 'fd': 5,
+ 'header_only': False,
+ 'parser': <function print_it at 0x283da28>,
+ 'proxy': '',
+ 'random': '60804c2a0b053fbd',
+ 'recv': <cStringIO.StringO object at 0x283a3e8>,
+ 'redirect': 0,
+ 'res_cookie': {'BAIDUID': {'domain': '.baidu.com',
+                            'expires': 'Thu, 31-Dec-37 23:55:55 GMT',
+                            'max-age': '2147483647',
+                            'path': '/',
+                            'value': 'BCB0BBBB4312D00C88BCDC9EEAAE3726:FG=1'},
+                'BD_LAST_QID': {'Max-Age': '1',
+                                'path': '/',
+                                'value': '16069052107084303783'},
+                'BIDUPSID': {'domain': '.baidu.com',
+                             'expires': 'Thu, 31-Dec-37 23:55:55 GMT',
+                             'max-age': '2147483647',
+                             'path': '/',
+                             'value': 'BCB0BBBB4312D00C88BCDC9EEAAE3726'}},
+ 'res_header': {'Connection': 'Keep-Alive',
+                'Content-Length': '215',
+                'Content-Type': 'text/html',
+                'Date': 'Thu, 21 May 2015 15:50:43 GMT',
+                'Location': 'https://www.baidu.com/',
+                'P3P': 'CP=" OTI DSP COR IVA OUR IND COM "',
+                'Server': 'BWS/1.1',
+                'Set-Cookie': 'BAIDUID=BCB0BBBB4312D00C88BCDC9EEAAE3726:FG=1; expires=Thu, 31-Dec-37 23:55:55 GMT; max-age=2147483647; path=/; domain=.baidu.com\r\nBIDUPSID=BCB0BBBB4312D00C88BCDC9EEAAE3726; expires=Thu, 31-Dec-37 23:55:55 GMT; max-age=2147483647; path=/; domain=.baidu.com\r\nBD_LAST_QID=16069052107084303783; path=/; Max-Age=1',
+                'X-UA-Compatible': 'IE=Edge,chrome=1'},
+ 'res_status': {'message': 'Moved Temporarily',
+                'protocol': 'HTTP/1.1',
+                'status': 302},
+ 'retry': 0,
+ 'send': <cStringIO.StringO object at 0x25fb8f0>,
+ 'ssl': False,
+ 'start': 1432223278.489937,
+ 'status': 512,
+ 'text': '<html>\r\n<head><title>302 Found</title></head>\r\n<body bgcolor="white">\r\n<center><h1>302 Found</h1></center>\r\n<hr><center>pr-nginx_1-0-221_BRANCH Branch\nTime : Wed May 20 10:35:46 CST 2015</center>\r\n</body>\r\n</html>\r\n',
+ 'url': 'http://www.baidu.com'}
+async_http Thu May 21 23:47:58 2015: 'acnt: 1, fcnt: 0, time: 0'
+```
+
+
+
