@@ -2,6 +2,7 @@
 #! /usr/bin/env python
 from _http import *
 
+import ctypes
 import socket
 import os
 import sys
@@ -346,10 +347,7 @@ def decode_chunk_stream(task):
             recv.seek(back_idx, io.SEEK_SET) 
             break 
         recv.seek(1, io.SEEK_CUR)
-        try:
-            x = int(num, 16) 
-        except:
-            pdb.set_trace()
+        x = int(num, 16) 
         if not x:
             done = True
             break
@@ -473,7 +471,7 @@ def catch_bug(task, why=None):
             pass
         try:
             con.close()
-        except (ValueError, OSError):
+        except OSError:
             pass 
     #关闭缓冲
     task["send"].close() 
@@ -733,19 +731,17 @@ def event_read(task):
         handle_read(task) 
 
 
-
 def handle_event(ep): 
-    time_now = time.time()
+    time_now = time.time() 
     for fd, event in ep.poll(2): 
-        #不太可能的情况 
+        if fd == g["timerfd"]: 
+            do_timer()
+            continue 
         task = fd_task.get(fd)
         if not task:
-            try:
-                ep.unregister(fd)
-            except:
-                continue 
-        if event & EPOLLERR:
-            #出错，清理任务 
+            os.close(fd) 
+            continue
+        if event & EPOLLERR: 
             remove_task(task, why="epoll err") 
             continue 
         if event & EPOLLOUT: 
@@ -797,11 +793,9 @@ def find_timeout(item, cur):
 
 
 def clean_tasks(now): 
-    #根据任务开始的时间排序
     sorted_tasks = sorted(tasks.items(),
             key = lambda x: x[1]["start"],
             reverse=True) 
-    #二分查找超时任务 
     mark = bisect_left(sorted_tasks, 
             now,
             find_timeout) 
@@ -812,8 +806,6 @@ def clean_tasks(now):
 
 
 def connect_more(now): 
-    #二分查找启用新任务
-    #根据任务开始的时间排序
     sorted_tasks = sorted(tasks.items(),
             key = lambda x: x[1]["start"],
             reverse=True) 
@@ -823,8 +815,7 @@ def connect_more(now):
     space = config["limit"] - len(running)
     for _,v in sorted_tasks[mark:]: 
         if space <= 0:
-            break
-        #如果有空位则发布新的任务
+            break 
         if v["con"]:
             continue 
         connect_remote(v) 
@@ -832,6 +823,7 @@ def connect_more(now):
 
 
 def do_timer(): 
+    assert os.read(g["timerfd"], 8)
     current = time.time() 
     g["timer_signal"] = False
     if current - http_time > config["timeout"]: 
@@ -846,28 +838,15 @@ def do_timer():
 def run_async(ep): 
     g["http_time"] = time.time()
     g["task_time"] = time.time()
-    g["timer_signal"] = False
-    signal.setitimer(signal.ITIMER_REAL, 1, 1)
-    signal.signal(signal.SIGALRM, internal_timer)
+    g["timer_signal"] = False 
     while True: 
         try:
             handle_event(ep) 
         except IOError:
             pass 
-        if timer_signal:
-            do_timer()
         #队列完成
         if not len(tasks):
             break 
-    #关闭时间信号
-    signal.setitimer(signal.ITIMER_REAL, 0, 0) 
-
-
-def internal_timer(signum, frame): 
-    if debug:
-        run_debug() 
-    g["timer_signal"] = True
-
 
 
 def fill_task(task): 
@@ -954,7 +933,10 @@ def dispatch_tasks(task_list):
         if space > 0: 
             connect_remote(i) 
             space -= 1 
+    g["timerfd"] = open_timerfd() 
+    ep.register(timerfd, EPOLLIN|EPOLLERR)
     run_async(ep) 
+    os.close(timerfd)
     fcnt = len(failed_tasks) 
     log_with_time("acnt: %d, fcnt: %d, time: %d" % (acnt,
         fcnt, time.time() - start_time))
@@ -1002,14 +984,6 @@ def insert_task(task):
     task["random"] = random 
 
 
-def wait_timeout(n): 
-    #临时忽略itimer产生的信号
-    signal.signal(signal.SIGALRM, signal.SIG_IGN)
-    time.sleep(n) 
-    #恢复信号处理
-    signal.signal(signal.SIGALRM, internal_timer)
-
-
 def debug_parser(task):
     pprint.pprint(task["res_header"]) 
 
@@ -1028,3 +1002,44 @@ def chain_next(task):
     if idx < len(chain): 
         task["chain_idx"] += 1
         return chain[idx] 
+
+
+
+class TIMESPEC(ctypes.Structure):
+    """ 
+    struct timespec {
+        time_t tv_sec;                /* Seconds */
+        long   tv_nsec;               /* Nanoseconds */
+    };
+ 
+    struct itimerspec {
+        struct timespec it_interval;  /* Interval for periodic timer */
+        struct timespec it_value;     /* Initial expiration */
+    }; 
+    """
+    _fields_ = [("interval_sec", ctypes.c_long),
+                ("interval_nsec", ctypes.c_long),
+                ("expire_sec", ctypes.c_long),
+                ("expire_nsec", ctypes.c_long),
+                ] 
+
+
+
+def open_timerfd():
+    """ 
+    int timerfd_create(int clockid, int flags);
+
+    int timerfd_settime(int fd, int flags,
+                       const struct itimerspec *new_value,
+                       struct itimerspec *old_value);
+    """ 
+    libc = ctypes.cdll.LoadLibrary("libc.so.6")
+    TFD_NONBLOCK = 00004000
+    TFD_CLOEXEC = 02000000 
+    CLOCK_MONOTONIC = 1
+    fd = libc.timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC)
+    assert fd != -1
+    ts = TIMESPEC(1, 0, 1, 0) 
+    assert libc.timerfd_settime(fd, 0, ctypes.pointer(ts), 0) != -1 
+    return fd 
+

@@ -82,7 +82,7 @@ hex_digits_set = set(string.hexdigits)
 
 default_header = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        #"Accept-Encoding": "gzip, deflate",
+        "Accept-Encoding": "gzip, deflate",
         "Accept-Language": "zh,zh-cn;q=0.8,en-us;q=0.5,en;q=0.3", 
         "Connection": "keep-alive",
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:25.0) Gecko/20100101 Firefox/32.0"
@@ -296,25 +296,44 @@ def generate_complex_post(payload):
         cl.append(BOUNDARY_END)
     return cl
 
+
 def generate_post(header, payload): 
-    has_file = False 
-    #use multipart/form-data or not
-    for k,v in payload.items(): 
-        if isinstance(v, unicode):
-            payload[k] = v.encode("utf-8")
-        elif isinstance(v, file):
-            has_file = True 
-        elif isinstance(v, str):    
-            continue
-        else:
-            raise Exception("payload value: str or unicode or fileobject") 
-    if has_file: 
-        header["Content-Type"] = FORM_COMPLEX_TYPE 
-        return "".join(generate_complex_post(payload))
-    else:
+    if isinstance(payload, str):
+        return payload 
+    elif isinstance(payload, unicode):
+        return payload.encode("utf-8")
+    elif isinstance(payload, list): 
+        pl = []
+        for k, v in payload: 
+            if isinstance(k, unicode):
+                k = k.encode("utf-8")
+            if isinstance(v, unicode):
+                v = v.encode("utf-8")
+            pl.append("%s=%s" % (quote_plus(k), quote_plus(v))) 
+        payload = "".join(pl)
         header["Content-Type"] = FORM_SIMPLE_TYPE 
-        cl = generate_simple_post(payload) 
-        return "".join(cl)
+        return payload
+    elif isinstance(payload, dict): 
+        has_file = False 
+        #use multipart/form-data or not
+        for k,v in payload.items(): 
+            if isinstance(v, unicode):
+                payload[k] = v.encode("utf-8")
+            elif isinstance(v, file):
+                has_file = True 
+            elif isinstance(v, str):    
+                continue
+            else:
+                raise Exception("payload value: str or unicode or fileobject") 
+        if has_file: 
+            header["Content-Type"] = FORM_COMPLEX_TYPE 
+            return "".join(generate_complex_post(payload))
+        else:
+            header["Content-Type"] = FORM_SIMPLE_TYPE 
+            cl = generate_simple_post(payload) 
+            return "".join(cl)
+    else:
+        raise ValueError("unknown payload type: %s" % type(payload))
 
 
 def quote(url): 

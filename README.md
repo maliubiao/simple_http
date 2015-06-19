@@ -1,5 +1,60 @@
 ##简单易用的同步/异步http库
 
+###异步方式
+```shell 
+
+In [21]: def print_it(x):                                                              
+    import pprint
+   ....:     pprint.pprint(x)
+   ....:     
+
+In [22]: async_http.repeat_tasks([{"url": "http://www.baidu.com", "parser": print_it}])
+{'chain': None,
+ 'chain_idx': 0,
+ 'con': <socket._socketobject object at 0x2812bb0>,
+ 'fd': 5,
+ 'header_only': False,
+ 'parser': <function print_it at 0x283da28>,
+ 'proxy': '',
+ 'random': '60804c2a0b053fbd',
+ 'recv': <cStringIO.StringO object at 0x283a3e8>,
+ 'redirect': 0,
+ 'res_cookie': {'BAIDUID': {'domain': '.baidu.com',
+                            'expires': 'Thu, 31-Dec-37 23:55:55 GMT',
+                            'max-age': '2147483647',
+                            'path': '/',
+                            'value': 'BCB0BBBB4312D00C88BCDC9EEAAE3726:FG=1'},
+                'BD_LAST_QID': {'Max-Age': '1',
+                                'path': '/',
+                                'value': '16069052107084303783'},
+                'BIDUPSID': {'domain': '.baidu.com',
+                             'expires': 'Thu, 31-Dec-37 23:55:55 GMT',
+                             'max-age': '2147483647',
+                             'path': '/',
+                             'value': 'BCB0BBBB4312D00C88BCDC9EEAAE3726'}},
+ 'res_header': {'Connection': 'Keep-Alive',
+                'Content-Length': '215',
+                'Content-Type': 'text/html',
+                'Date': 'Thu, 21 May 2015 15:50:43 GMT',
+                'Location': 'https://www.baidu.com/',
+                'P3P': 'CP=" OTI DSP COR IVA OUR IND COM "',
+                'Server': 'BWS/1.1',
+                'Set-Cookie': 'BAIDUID=BCB0BBBB4312D00C88BCDC9EEAAE3726:FG=1; expires=Thu, 31-Dec-37 23:55:55 GMT; max-age=2147483647; path=/; domain=.baidu.com\r\nBIDUPSID=BCB0BBBB4312D00C88BCDC9EEAAE3726; expires=Thu, 31-Dec-37 23:55:55 GMT; max-age=2147483647; path=/; domain=.baidu.com\r\nBD_LAST_QID=16069052107084303783; path=/; Max-Age=1',
+                'X-UA-Compatible': 'IE=Edge,chrome=1'},
+ 'res_status': {'message': 'Moved Temporarily',
+                'protocol': 'HTTP/1.1',
+                'status': 302},
+ 'retry': 0,
+ 'send': <cStringIO.StringO object at 0x25fb8f0>,
+ 'ssl': False,
+ 'start': 1432223278.489937,
+ 'status': 512,
+ 'text': '<html>\r\n<head><title>302 Found</title></head>\r\n<body bgcolor="white">\r\n<center><h1>302 Found</h1></center>\r\n<hr><center>pr-nginx_1-0-221_BRANCH Branch\nTime : Wed May 20 10:35:46 CST 2015</center>\r\n</body>\r\n</html>\r\n',
+ 'url': 'http://www.baidu.com'}
+async_http Thu May 21 23:47:58 2015: 'acnt: 1, fcnt: 0, time: 0'
+```
+
+
 ###同步方式
 
 ```shell
@@ -132,99 +187,44 @@ simple_http.post("https://google.com", payload=payload)
 ###使用代理
 ####Socks5
 ```shell 
-In [8]: simple_http.get("https://google.com", proxy='socks5://127.0.0.1:8888')
-Out[8]: 
-({'Alternate-Protocol': '443:quic',
-  'Cache-Control': 'public, max-age=2592000',
-  'Content-Length': '220',
+In [3]: simple_http.get("https://google.com", proxy='socks5://127.0.0.1:9988')
+redirect to https://www.google.co.jp/?gfe_rd=cr&ei=phuEVfPKEYuT8QfC4YCgBA
+Out[3]: 
+{'cookie': {},
+ 'header': {'Alternate-Protocol': '443:quic,p=1',
+  'Cache-Control': 'private',
+  'Content-Length': '262',
   'Content-Type': 'text/html; charset=UTF-8',
-  'Date': 'Wed, 08 Jan 2014 13:28:59 GMT',
-  'Expires': 'Fri, 07 Feb 2014 13:28:59 GMT',
-  'Location': 'https://www.google.com/',
-  'Server': 'gws',
-  'X-Frame-Options': 'SAMEORIGIN',
-  'X-XSS-Protection': '1; mode=block',
-  'message': 'Moved Permanently',
-  'protocol': 'HTTP/1.1',
-  'status': 301},
- None,
- '<HTML><HEAD><meta http-equiv="content-type" content="text/html;charset=utf-8">\n<TITLE>301 Moved</TITLE></HEAD><BODY>\n<H1>301 Moved</H1>\nThe document has moved\n<A HREF="https://www.google.com/">here</A>.\r\n</BODY></HTML>\r\n')
+  'Date': 'Fri, 19 Jun 2015 13:39:50 GMT',
+  'Location': 'https://www.google.co.jp/?gfe_rd=cr&ei=phuEVfPKEYuT8QfC4YCgBA',
+  'Server': 'GFE/2.0'},
+ 'message': 'Found',
+ 'protocol': 'HTTP/1.1',
+ 'status': 302,
+ 'text': '<HTML><HEAD><meta http-equiv="content-type" content="text/html;charset=utf-8">\n<TITLE>302 Moved</TITLE></HEAD><BODY>\n<H1>302 Moved</H1>\nThe document has moved\n<A HREF="https://www.google.co.jp/?gfe_rd=cr&amp;ei=phuEVfPKEYuT8QfC4YCgBA">here</A>.\r\n</BODY></HTML>\r\n',
+ 'total_length': 262,
+ 'url': 'https://google.com'}
+
 ```
 ####http代理
 ```shell 
-In [46]: simple_http.get("https://google.com", proxy='http://127.0.0.1:8088')
-Out[46]: 
-({'Alternate-Protocol': '443:quic',
-  'Cache-Control': 'public, max-age=2592000',
-  'Content-Encoding': 'deflate',
-  'Content-Length': '172',
+In [3]: simple_http.get("https://google.com", proxy='http://127.0.0.1:9988')
+redirect to https://www.google.co.jp/?gfe_rd=cr&ei=phuEVfPKEYuT8QfC4YCgBA
+Out[3]: 
+{'cookie': {},
+ 'header': {'Alternate-Protocol': '443:quic,p=1',
+  'Cache-Control': 'private',
+  'Content-Length': '262',
   'Content-Type': 'text/html; charset=UTF-8',
-  'Date': 'Wed, 08 Jan 2014 13:46:57 GMT',
-  'Expires': 'Fri, 07 Feb 2014 13:46:57 GMT',
-  'Location': 'https://www.google.com/',
-  'Server': 'gws',
-  'Via': 'HTTP/1.1 GWA',
-  'X-Frame-Options': 'SAMEORIGIN',
-  'X-Xss-Protection': '1; mode=block',
-  'message': '',
-  'protocol': 'HTTP/1.1',
-  'status': 301},
- None,
- '<HTML><HEAD><meta http-equiv="content-type" content="text/html;charset=utf-8">\n<TITLE>301 Moved</TITLE></HEAD><BODY>\n<H1>301 Moved</H1>\nThe document has moved\n<A HREF="https://www.google.com/">here</A>.\r\n</BODY></HTML>\r\n')
-```
-
-###异步方式
-```shell 
-
-In [21]: def print_it(x):                                                              
-    import pprint
-   ....:     pprint.pprint(x)
-   ....:     
-
-In [22]: async_http.repeat_tasks([{"url": "http://www.baidu.com", "parser": print_it}])
-{'chain': None,
- 'chain_idx': 0,
- 'con': <socket._socketobject object at 0x2812bb0>,
- 'fd': 5,
- 'header_only': False,
- 'parser': <function print_it at 0x283da28>,
- 'proxy': '',
- 'random': '60804c2a0b053fbd',
- 'recv': <cStringIO.StringO object at 0x283a3e8>,
- 'redirect': 0,
- 'res_cookie': {'BAIDUID': {'domain': '.baidu.com',
-                            'expires': 'Thu, 31-Dec-37 23:55:55 GMT',
-                            'max-age': '2147483647',
-                            'path': '/',
-                            'value': 'BCB0BBBB4312D00C88BCDC9EEAAE3726:FG=1'},
-                'BD_LAST_QID': {'Max-Age': '1',
-                                'path': '/',
-                                'value': '16069052107084303783'},
-                'BIDUPSID': {'domain': '.baidu.com',
-                             'expires': 'Thu, 31-Dec-37 23:55:55 GMT',
-                             'max-age': '2147483647',
-                             'path': '/',
-                             'value': 'BCB0BBBB4312D00C88BCDC9EEAAE3726'}},
- 'res_header': {'Connection': 'Keep-Alive',
-                'Content-Length': '215',
-                'Content-Type': 'text/html',
-                'Date': 'Thu, 21 May 2015 15:50:43 GMT',
-                'Location': 'https://www.baidu.com/',
-                'P3P': 'CP=" OTI DSP COR IVA OUR IND COM "',
-                'Server': 'BWS/1.1',
-                'Set-Cookie': 'BAIDUID=BCB0BBBB4312D00C88BCDC9EEAAE3726:FG=1; expires=Thu, 31-Dec-37 23:55:55 GMT; max-age=2147483647; path=/; domain=.baidu.com\r\nBIDUPSID=BCB0BBBB4312D00C88BCDC9EEAAE3726; expires=Thu, 31-Dec-37 23:55:55 GMT; max-age=2147483647; path=/; domain=.baidu.com\r\nBD_LAST_QID=16069052107084303783; path=/; Max-Age=1',
-                'X-UA-Compatible': 'IE=Edge,chrome=1'},
- 'res_status': {'message': 'Moved Temporarily',
-                'protocol': 'HTTP/1.1',
-                'status': 302},
- 'retry': 0,
- 'send': <cStringIO.StringO object at 0x25fb8f0>,
- 'ssl': False,
- 'start': 1432223278.489937,
- 'status': 512,
- 'text': '<html>\r\n<head><title>302 Found</title></head>\r\n<body bgcolor="white">\r\n<center><h1>302 Found</h1></center>\r\n<hr><center>pr-nginx_1-0-221_BRANCH Branch\nTime : Wed May 20 10:35:46 CST 2015</center>\r\n</body>\r\n</html>\r\n',
- 'url': 'http://www.baidu.com'}
-async_http Thu May 21 23:47:58 2015: 'acnt: 1, fcnt: 0, time: 0'
+  'Date': 'Fri, 19 Jun 2015 13:39:50 GMT',
+  'Location': 'https://www.google.co.jp/?gfe_rd=cr&ei=phuEVfPKEYuT8QfC4YCgBA',
+  'Server': 'GFE/2.0'},
+ 'message': 'Found',
+ 'protocol': 'HTTP/1.1',
+ 'status': 302,
+ 'text': '<HTML><HEAD><meta http-equiv="content-type" content="text/html;charset=utf-8">\n<TITLE>302 Moved</TITLE></HEAD><BODY>\n<H1>302 Moved</H1>\nThe document has moved\n<A HREF="https://www.google.co.jp/?gfe_rd=cr&amp;ei=phuEVfPKEYuT8QfC4YCgBA">here</A>.\r\n</BODY></HTML>\r\n',
+ 'total_length': 262,
+ 'url': 'https://google.com'}
 ```
 
 
