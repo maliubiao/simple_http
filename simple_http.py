@@ -174,6 +174,7 @@ def decode_chunk_stream(response):
                 break
             num += char 
         if goout:
+            recv.seek(back_idx, io.SEEK_SET) 
             break
         recv.seek(1, io.SEEK_CUR)
         x = int(num, 16) 
@@ -205,7 +206,7 @@ def parse_header(response):
         skip = 2
     else:
         skip = 4
-    if not idx:
+    if idx < 0:
         return 
     recv.truncate(0)
     recv.write(data[idx+skip:])

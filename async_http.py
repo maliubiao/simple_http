@@ -92,8 +92,6 @@ fd_task = { }
 
 tasks = { }
 
-running = {}
-
 g = globals() 
 
 debug = False
@@ -104,31 +102,50 @@ config = {
         "timeout": 30,
         "interval": 1,
         "retry": True,
-        "retry_limit": 3
+        "retry_limit": 10, 
         } 
 
 
 failed_tasks = { } 
 
 
-copy_keys = ("url", "parser", "method",
-    "retry", "redirect", "session", "chain",
-    "prev", "chain_idx", "ssl", "urlsset", "header", "cookie") 
+internal_keys = set(("con",
+"recv",
+"send",
+"status",
+"fd", 
+"random",
+"start",
+"res_status",
+"res_cookie",
+"res_header",
+"text", 
+"why",
+"reason",
+"header_only"
+"chunked_idx",
+"chunked_b",
+))
 
 
-possible_methods = set(("GET", "POST", "HEAD", "PUT", "DELETE")) 
+possible_methods = set(("GET",
+"POST",
+"HEAD",
+"PUT",
+"DELETE")) 
 
 
-def default_copy(task):
-    t = {}
-    for i in copy_keys:
-        if i in task:
+
+def default_copy(task): 
+    t = {} 
+    for i in task:
+        if i not in internal_keys:
             t[i] = task[i]
     return t 
 
 
-
 def generate_request(task): 
+    assert task["url"] and task["method"].upper() in possible_methods
     url = task["url"]
     rl = []
     url_parts = urlparse(url) 
@@ -271,7 +288,7 @@ def call_parser(task):
     enc =  task["res_header"].get("Content-Encoding") 
     text = task["recv"].getvalue() 
     task["recv"].truncate(0) 
-    task["text"] = text
+    task["text"] = text 
     if enc == "gzip": 
         task["text"] = zlib.decompress(text, 16+zlib.MAX_WBITS)
     elif enc == "deflate": 
@@ -311,7 +328,7 @@ def convert_chunked(cbuf, normal_stream):
             if char == "\r": 
                 break
             num += char 
-        if goout:
+        if goout: 
             break
         cbuf.seek(1, io.SEEK_CUR)
         x = int(num, 16) 
@@ -347,8 +364,15 @@ def decode_chunk_stream(task):
             recv.seek(back_idx, io.SEEK_SET) 
             break 
         recv.seek(1, io.SEEK_CUR)
-        x = int(num, 16) 
-        if not x:
+        try:
+            x = int(num, 16) 
+        except: 
+            f = open("chunk_bug." + str(time.time()), "w+")
+            log_with_time("chunk_bug")
+            f.write(task["recv"].getvalue())
+            f.close()
+            exit(1)
+        if not x: 
             done = True
             break
         chunk = recv.read(x) 
@@ -388,7 +412,6 @@ def parse_header(task):
     recv = task["recv"]
     content = recv.getvalue()
     body_pos = content.find("\r\n\r\n") 
-    #没找到头再等 
     if body_pos < 0:
         return 
     recv.truncate(0)
@@ -445,8 +468,8 @@ STATUS_DONE = 0x1 << 10
 def remove_task(task, why=None): 
     try:
         catch_bug(task, why=why)
-    except Exception as e:
-        print "async_http: remove_task: %s" % str(e)
+    except:
+        traceback.print_exc() 
 
 
 
@@ -457,30 +480,25 @@ def catch_bug(task, why=None):
         failed_tasks[random] = task 
     con = task["con"]
     fd = task["fd"] 
-    #先清理这个
-    if fd in fd_task:
+    if fd in fd_task: 
         del fd_task[fd] 
     try:
         ep.unregister(fd) 
-    except IOError:
+    except IOError as e:
         pass 
-    if why:
-        try:
-            con.shutdown(socket.SHUT_RDWR)
-        except socket.error:
-            pass
-        try:
-            con.close()
-        except OSError:
-            pass 
-    #关闭缓冲
-    task["send"].close() 
-    task["recv"].close() 
-    #清理注册 
-    if random in running:
-        del running[random] 
+    try:
+        con.shutdown(socket.SHUT_RDWR)
+    except socket.error:
+        pass
+    try:
+        con.close()
+    except OSError:
+        pass 
     if random in tasks:
         del tasks[random] 
+    task["send"].close() 
+    task["recv"].close() 
+
 
 
 
@@ -686,7 +704,6 @@ def handle_read_ssl(task):
 
 
 def remote_connected(task): 
-    running[task["random"]] = task
     if task.get("ssl"):    
         task["status"] = STATUS_SSL_HANDSHAKE 
         task["ssl_con"] = ssl.wrap_socket(task["con"], do_handshake_on_connect=False)
@@ -738,8 +755,7 @@ def handle_event(ep):
             do_timer()
             continue 
         task = fd_task.get(fd)
-        if not task:
-            os.close(fd) 
+        if not task: 
             continue
         if event & EPOLLERR: 
             remove_task(task, why="epoll err") 
@@ -755,8 +771,7 @@ def handle_event(ep):
 
 def run_debug(): 
     print "======================"
-    print "tasks", len(tasks)
-    print "running", len(running)
+    print "tasks", len(tasks) 
     print "failed", len(failed_tasks)
     print "======================"
 
@@ -812,7 +827,7 @@ def connect_more(now):
     mark = bisect_left(sorted_tasks,
             0, 
             find_new_task) 
-    space = config["limit"] - len(running)
+    space = config["limit"] - len(fd_task)
     for _,v in sorted_tasks[mark:]: 
         if space <= 0:
             break 
@@ -936,7 +951,10 @@ def dispatch_tasks(task_list):
     g["timerfd"] = open_timerfd() 
     ep.register(timerfd, EPOLLIN|EPOLLERR)
     run_async(ep) 
-    os.close(timerfd)
+    os.close(timerfd) 
+    ep.close()
+    del g["timerfd"] 
+    del g["ep"]
     fcnt = len(failed_tasks) 
     log_with_time("acnt: %d, fcnt: %d, time: %d" % (acnt,
         fcnt, time.time() - start_time))
