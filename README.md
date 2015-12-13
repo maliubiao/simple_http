@@ -1,4 +1,8 @@
 ##简单易用的同步/异步http库
+###安装
+```shell
+sudo python setup.py install
+```
 
 ###异步方式
 ```shell 
