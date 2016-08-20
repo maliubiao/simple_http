@@ -32,8 +32,6 @@ cons = {}
 buf_queue = {} 
 applications = {}
 forbidden = {} 
-statics = {}
-sucess = 0
 failed = 0
 
 epm = None
@@ -98,7 +96,7 @@ permR = 0b100
 
 site_allowed = [
         "localhost:80",
-        "128.0.0.1:80"
+        "127.0.0.1:80"
         ]
 
 refer_allowed = [

@@ -21,15 +21,17 @@ from fcntl import *
 
 
 #server ip, port 
-SERVER_IP = "127.0.0.1"
-SERVER_PORT = 9988
+SERVER_IP = ""
+SERVER_PORT = 9779
 
 MAX_LISTEN = 1024
-REMOTE = ("106.186.112.80", 9000)
-
-
+#REMOTE = ("127.0.0.1", 9905)
+REMOTE = ("173.230.153.65", 9905) 
+#REMOTE = ("118.144.88.212", 9905)
 cons = {} 
 g = globals() 
+BUFFER_SIZE = 1024 * 1024 * 32
+
 
 #clients allowed
 allowed  = {
@@ -100,12 +102,12 @@ def read_key(keyfile):
 
 def set_globals(): 
     g["sock"] = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) 
     sock.bind((SERVER_IP, SERVER_PORT)) 
     sock.listen(MAX_LISTEN) 
     g["sockfd"] = sock.fileno() 
-    g["epoll_object"] = epoll()
-    epoll_object.register(sockfd, EPOLLIN | EPOLLERR)
+    g["ep"] = epoll()
+    ep.register(sockfd, EPOLLIN | EPOLLERR)
     g["SD"], g["DS"] = read_key("key") 
     g["SOCKS_HANDSHAKE_CLIENT"] = "\x05\x01\x00".translate(SD)
     g["SOCKS_HANDSHAKE_SERVER"] = "\x05\x00".translate(SD)
@@ -113,150 +115,148 @@ def set_globals():
     g["SOCKS_REQUEST_OK"] = SOCKS_REQUEST_OK_RAW.translate(SD) 
 
 
-def clean_profile(context): 
+def clean_profile(ctx): 
     #close client buffer
-    context["in_buffer"].close()
-    context["out_buffer"].close() 
+    ctx["in_buffer"].close()
+    ctx["out_buffer"].close() 
     #close client socket
     try: 
-        context["from_conn"].shutdown(socket.SHUT_RDWR) 
+        ctx["from_conn"].shutdown(socket.SHUT_RDWR) 
     except Exception as e:
         pass
     try:
-        context["from_conn"].close() 
+        ctx["from_conn"].close() 
     except Exception as e:
-        pass
+        pass 
     try:
-        context["to_conn"].shutdown(socket.SHUT_RDWR)
-    except Exception as e:
-        pass
-    try:
-        context["to_conn"].close()
-    except Exception as e:
-        pass
-    try:
-        epoll_object.unregister(context["from_conn"].fileno()) 
+        ep.unregister(ctx["from_conn"].fileno()) 
     except Exception as e:
         pass
 
-def clean_queue(context): 
+def clean_queue(ctx): 
     #close pipe 
     server = True
     try:
-        server_fd  = context["to_conn"].fileno()
+        server_fd  = ctx["to_conn"].fileno()
     except:
         server = False 
-    clean_profile(context) 
-    del cons[context["fd"]] 
+    clean_profile(ctx) 
+    del cons[ctx["fd"]] 
     if server:
-        context_server = cons[server_fd]
-        clean_profile(context_server) 
+        ctx_server = cons[server_fd]
+        if ctx_server["out_buffer"].tell(): 
+            ctx_server["close_on_sent"] = True
+            #数据还没有转发完成 
+            return 
+    if server:
+        ctx_server = cons[server_fd]
+        clean_profile(ctx_server) 
         del cons[server_fd]
 
     
-def handle_write_later(context): 
-    out_buffer = context["out_buffer"]
-    from_conn = context["from_conn"] 
-    if out_buffer.tell(): 
-        data = out_buffer.getvalue()
-        data_count = len(data) 
-        try: 
-            data_sent = from_conn.send(data) 
-        except socket.error as e: 
-            if e.errno != EAGAIN: 
-                clean_queue(context)
-            return 
-        out_buffer.truncate(0)
-        if data_sent != data_count: 
-            out_buffer.write(data[data_sent:])
-            return 
+def handle_write_later(ctx): 
+    out_buffer = ctx["out_buffer"]
+    from_conn = ctx["from_conn"] 
+    to_ctx = cons[ctx["to_conn"].fileno()]
+    data = out_buffer.getvalue()
+    data_count = len(data) 
+    try: 
+        data_sent = from_conn.send(data) 
+    except socket.error as e: 
+        if e.errno != EAGAIN: 
+            clean_queue(ctx)
+        return 
+    out_buffer.truncate(0)
+    if data_sent != data_count: 
+        out_buffer.write(data[data_sent:]) 
+        #下次再发, 关注pollout
+        add_pollout(ctx) 
+        #堆积了100k， 取消pollin, 避免busyloop
+        if data_count - data_sent > BUFFER_SIZE: 
+            remove_pollin(to_ctx) 
+    else: 
+        remove_pollout(ctx)
+        if ctx.get("close_on_sent"):
+            clean_queue(ctx)
+            return
+    if out_buffer.tell() < BUFFER_SIZE:
+        #快发完了,  关注pollin,  避免starve
+        add_pollin(to_ctx) 
 
 
-def handle_handshake(context): 
-    from_conn = context["from_conn"]
-    fd = context["fd"] 
+def handle_handshake(ctx): 
+    from_conn = ctx["from_conn"]
+    fd = ctx["fd"] 
     try:
         raw = from_conn.recv(128) 
     except socket.error as e:
-        clean_queue(context)
+        clean_queue(ctx)
         return
     #maybe RST
     if not raw: 
-        clean_queue(context)
+        clean_queue(ctx)
         return 
     #connect, or bind
     if not (raw.startswith("\x05\x01") or raw.startswith("\x05\x02")): 
-        clean_queue(context)
+        clean_queue(ctx)
         return
     #handshake packet or not 
     if len(raw) > 12:
-        clean_queue(context)
+        clean_queue(ctx)
         return
     #connect our server
     try:        
         request_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         request_sock.setblocking(0)  
         request_fd = request_sock.fileno()
-        epoll_object.register(request_fd, EPOLLIN|EPOLLOUT|EPOLLERR)
+        flag =  EPOLLIN|EPOLLOUT|EPOLLERR
+        ep.register(request_fd, flag)
+        ctx["pf"] = flag
     except Exception as e: 
-        clean_queue(context)
+        clean_queue(ctx)
         return 
-    #request context 
+    #request ctx 
     cons[request_fd] = {
             "in_buffer": StringIO(),
             "out_buffer": StringIO(),
             "from_conn": request_sock,
             "to_conn": from_conn,
+            "to_fd": from_conn.fileno(),
             "crypted": False, 
             "request": "",
+            "pf": flag, 
             "status": STATUS_SERVER_CONNECTED, 
             } 
-    context["to_conn"] = request_sock
+    ctx["to_conn"] = request_sock
+    ctx["to_fd"] = request_fd 
     #next status , CONNECTED
-    context["status"] = STATUS_REQUEST 
+    ctx["status"] = STATUS_REQUEST 
     try: 
         request_sock.connect(REMOTE)
     except socket.error as e: 
         #close connection if it's a real exception 
         if e.errno != errno.EINPROGRESS: 
-            clean_queue(context) 
+            clean_queue(ctx) 
 
-def notify_server_down(context): 
-    status = "HTTP/1.1 500 Internal Server Error"
-    content_type = "Content-Type: text/html"
-    msg = """<html>
-        <head>转发服务器已经关闭</head>
-        <body><h1>转发服务器已经关闭，请联系作者, 或者刷新重试</h1></body> 
-    </html>
-    """
-    content_length = "Content-Length: %d" % len(msg)
-    response =  "\r\n".join((status, content_type, content_length, msg))
-    try:
-        count = context["from_conn"].send(response) 
-    except socket.error:
-        context["out_buffer"].write(response)
 
-def which_status(context): 
-    fd = context["fd"]
-    from_conn = context["from_conn"] 
+
+def which_status(ctx): 
+    fd = ctx["fd"]
+    from_conn = ctx["from_conn"] 
     status = None 
-    #we don't read more until we can send them out
-    to_conn = context["to_conn"]
-    if to_conn: 
-        if cons[to_conn.fileno()]["out_buffer"].tell():
-            return 
+    to_conn = ctx["to_conn"] 
     try:
-        text = from_conn.recv(256) 
+        text = from_conn.recv(1024) 
     except socket.error as e: 
-        clean_queue(context)
+        clean_queue(ctx)
         return 
     #may RST
     if not text: 
-        clean_queue(context)
+        clean_queue(ctx)
         return 
     raw = text
     #if this msg if from server, decrypt it
-    if not context["crypted"]: 
+    if not ctx["crypted"]: 
         raw = text.translate(DS)           
     if raw.startswith("\x05\x00\x00\x01"):
         status = STATUS_SERVER_WAIT_REMOTE
@@ -267,19 +267,18 @@ def which_status(context):
     return status, text 
 
 
-def handle_server_connected(context): 
-    to_context = cons[context["to_conn"].fileno()]
-    try: 
-        context["to_conn"].send("\x05\x00")
-    except socket.error: 
-        to_context["out_buffer"].write("\x05\x00")
-    context["status"] = STATUS_REQUEST
-    to_context["status"] = STATUS_REQUEST
+def handle_server_connected(ctx): 
+    to_ctx = cons[ctx["to_conn"].fileno()] 
+    to_ctx["out_buffer"].write("\x05\x00") 
+    remove_pollout(ctx)
+    handle_write_later(to_ctx)
+    ctx["status"] = STATUS_REQUEST
+    to_ctx["status"] = STATUS_REQUEST
     
 
-def handle_new_request(context, text): 
-    to_conn = context["to_conn"]
-    to_context = cons[to_conn.fileno()] 
+def handle_new_request(ctx, text): 
+    to_conn = ctx["to_conn"]
+    to_ctx = cons[to_conn.fileno()] 
     parse_buffer = StringIO()
     parse_buffer.write(text)
     parse_buffer.seek(4) 
@@ -296,6 +295,9 @@ def handle_new_request(context, text):
         addr = parse_buffer.read(16)
         net = socket.inet_ntop(socket.AF_INET6, addr)
         addr_to += net
+    else:
+        clean_queue(ctx)
+        return
     addr_port = parse_buffer.read(2) 
     parse_buffer.close()
     addr_to += addr_port
@@ -303,103 +305,85 @@ def handle_new_request(context, text):
     try:
         port = unpack(">H", addr_port)
     except struct.error: 
-        clean_queue(context)
+        clean_queue(ctx)
         return 
     remote = (addr, port[0]) 
     print "new request %s:%d" % remote
-    context["request"] = remote 
-    to_context["request"] = remote 
-    try:        
-        to_conn.send(text.translate(SD)) 
-    except socket.error as e: 
-        if e.errno == EAGAIN:
-            to_context["out_buffer"].write(text.translate(SD))  
+    ctx["request"] = remote 
+    to_ctx["request"] = remote 
+    text += os.urandom(32)
+    data = text.translate(SD) 
+    to_ctx["out_buffer"].write(data)
+    handle_write_later(to_ctx)
 
 
-def handle_server_wait_remote(context): 
-    to_conn = context["to_conn"]
-    to_context = cons[to_conn.fileno()] 
-    try: 
-        to_conn.send(SOCKS_REQUEST_OK_RAW)
-    except socket.error:
-        to_context["out_buffer"].write(SOCKS_REQUEST_OK_RAW)
-        return 
-    context["status"] = STATUS_DATA
-    to_context["status"] = STATUS_DATA 
+def handle_server_wait_remote(ctx): 
+    to_conn = ctx["to_conn"]
+    to_ctx = cons[to_conn.fileno()] 
+    to_ctx["out_buffer"].write(SOCKS_REQUEST_OK_RAW)
+    handle_write_later(to_ctx)
+    ctx["status"] = STATUS_DATA
+    to_ctx["status"] = STATUS_DATA 
 
-def read_to_buffer(con, buf): 
-    while True:
-        try: 
-            data = con.recv(4096)
-            if not data:
-                break
-            buf.write(data) 
+
+def read_to_buffer(con, buf):
+    while 1:
+        try:
+            mark = buf.tell()
+            buf.write(con.recv(4096000))
+            if buf.tell() == mark:
+                break 
         except socket.error as e:
             if e.errno == EAGAIN:
-                break 
-            raise e
+                break
+            raise e 
 
 
-def handle_redirect_data(context, text): 
-    from_conn = context["from_conn"]
-    to_conn = context["to_conn"]
-    to_context = cons[context["to_conn"].fileno()]
-    to_out_buffer = to_context["out_buffer"] 
-    in_buffer = context["in_buffer"] 
+
+def handle_redirect_data(ctx, text): 
+    from_conn = ctx["from_conn"]
+    to_conn = ctx["to_conn"]
+    to_ctx = cons[ctx["to_conn"].fileno()]
+    to_out_buffer = to_ctx["out_buffer"] 
+    in_buffer = ctx["in_buffer"] 
     in_buffer.write(text)  
     try:
         read_to_buffer(from_conn, in_buffer)
     except socket.error as e: 
-        clean_queue(context)
+        clean_queue(ctx)
         return
     data_count = in_buffer.tell() 
     raw = in_buffer.getvalue()
-    if context["crypted"]:
+    if ctx["crypted"]:
         raw = raw.translate(SD)
     else:
         raw = raw.translate(DS)
     in_buffer.truncate(0) 
-    try: 
-        data_sent = to_conn.send(raw) 
-    except socket.error as e:
-        if e.errno == EAGAIN: 
-            to_out_buffer.write(raw) 
-        else: 
-            clean_queue(context)
-        return    
-    if data_sent != data_count: 
-        to_out_buffer.write(raw[data_sent:])
+    to_out_buffer.write(raw)
+    handle_write_later(to_ctx)
 
 
-def handle_pollout(context):
-    status = context["status"] 
-    if status & STATUS_SERVER_CONNECTED: 
-        handle_server_connected(context) 
-        return 
-    if context["out_buffer"].tell(): 
-        handle_write_later(context) 
 
-
-def handle_pollin(context): 
-    status = context["status"] 
+def handle_pollin(ctx): 
+    status = ctx["status"] 
     if status & STATUS_HANDSHAKE: 
-        handle_handshake(context)
+        handle_handshake(ctx)
         return 
-    result = which_status(context)
+    result = which_status(ctx)
     if not result:
         return
     status, text = result 
 
     if status & STATUS_REQUEST: 
-        handle_new_request(context, text) 
+        handle_new_request(ctx, text) 
         return
 
     if status & STATUS_SERVER_WAIT_REMOTE: 
-        handle_server_wait_remote(context)
+        handle_server_wait_remote(ctx)
         return 
 
     if status & STATUS_DATA: 
-        handle_redirect_data(context, text)
+        handle_redirect_data(ctx, text)
 
 def close_conn(conn): 
     try:
@@ -408,28 +392,31 @@ def close_conn(conn):
     except Exception:
         pass
 
+
 def handle_connection(): 
     conn, addr = sock.accept() 
+    print addr
     ip  = addr[0]
     if ip in forbidden:
         close_conn(conn)
         return 
-    if not ip in allowed:
-        close_conn(conn)
-        return 
     fd = conn.fileno() 
     conn.setblocking(0)
-    epoll_object.register(fd, EPOLLIN|EPOLLOUT|EPOLLERR)
+    flag = EPOLLIN|EPOLLERR
+    ep.register(fd, flag)
     #add fd to queue
     cons[fd] = {
             "in_buffer": StringIO(),
             "out_buffer": StringIO(),
             "from_conn": conn,
             "to_conn": None,
+            "to_fd": -1,
             "crypted": True,
             "request": None,
+            "pf": flag, 
             "status": STATUS_HANDSHAKE 
             } 
+
 
 def handle_socket(event): 
     if event & EPOLLIN:
@@ -438,44 +425,81 @@ def handle_socket(event):
         raise Exception("fatal error") 
 
 
-def handle_event(ep): 
-    fast = False
+def add_pollin(ctx):
+    #可以检测一下用不用修改
+    if "pf" not in ctx:
+        return
+    after =  ctx["pf"] | EPOLLIN
+    ctx["pf"] = after 
+    if ctx["from_conn"]:
+        ep.modify(ctx["from_conn"].fileno(),
+                after) 
+
+
+def remove_pollin(ctx):
+    if "pf" not in ctx:
+        return
+    after = ctx["pf"] & ~EPOLLIN
+    ctx["pf"] = after 
+    if ctx["from_conn"]:
+        ep.modify(ctx["from_conn"].fileno(), 
+                after) 
+
+
+def remove_pollout(ctx): 
+    if "pf" not in ctx:
+        return 
+    after = ctx["pf"] & ~EPOLLOUT
+    ctx["pf"] = after 
+    if ctx["from_conn"]:
+        ep.modify(ctx["from_conn"].fileno(),
+                after) 
+
+
+def add_pollout(ctx): 
+    if "pf" not in ctx:
+        return 
+    after =  ctx["pf"] | EPOLLOUT
+    ctx["pf"] = after 
+    if ctx["from_conn"]:
+        ep.modify(ctx["from_conn"].fileno(),
+                after) 
+
+
+
+def handle_event(): 
     for fd, event in ep.poll(1): 
         if fd == sockfd: 
             handle_socket(event) 
             continue
         if fd not in cons: 
             continue 
-        context = cons[fd] 
-        context["fd"] = fd 
+        ctx = cons[fd] 
+        ctx["fd"] = fd 
         if event & EPOLLERR:
-            clean_queue(context)
-            continue
-        if (not (event & EPOLLIN)) and (
-            not context["out_buffer"].tell()) and (
-                not context["status"] & STATUS_SERVER_CONNECTED): 
+            clean_queue(ctx)
             continue 
-        fast = True 
         if event & EPOLLOUT:
-            handle_pollout(context) 
-        if event & EPOLLIN:
-            handle_pollin(context) 
+            if ctx["status"] & STATUS_SERVER_CONNECTED: 
+                handle_server_connected(ctx)
+            elif ctx["out_buffer"].tell():
+                handle_write_later(ctx) 
+            else:
+                clean_queue(ctx)
+                continue
+        if event & EPOLLIN: 
+            handle_pollin(ctx) 
 
-    return fast
 
 def poll_wait(): 
-    fast = True
-    ep_poll = epoll_object.poll
     while True: 
-        if fast:
-            sleep_time = 0
-            fast = False
-        else:
-            sleep_time = 0.1 
-        sleep(sleep_time) 
-        fast = handle_event(epoll_object) 
+        try:
+            handle_event() 
+        except IOError:
+            pass
+
 
 if __name__ == "__main__":
     set_globals() 
-    daemonize()
+    #daemonize()
     poll_wait()

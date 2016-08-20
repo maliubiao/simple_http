@@ -36,7 +36,7 @@ reversed_table = {
         "\x2A": "%2A", #*
         "\x2B": "%2B", #+
         "\x2C": "%2C", #,
-        #"\x2F": "%2F", #/
+        "\x2F": "%2F", #/
         "\x3A": "%3A", #:
         "\x3B": "%3B", #;
         "\x3D": "%3D", #=
@@ -521,7 +521,7 @@ def generate_cookie(simple_cookie_dict):
     for k,v in simple_cookie_dict.items():
         if isinstance(k, unicode) or isinstance(v, unicode):
             has_unicode = True
-        ret.append("%s=%s; " % (quote_plus(k),quote_plus(v))) 
+        ret.append("%s=%s; " % (k, v)) 
     if has_unicode:
         return "".join(ret)[:-2].encode("utf-8")
     else:
@@ -532,7 +532,7 @@ def parse_cookie(simple_cookie):
     cookie_dict = {} 
     for cookie in simple_cookie.split(";"):
         kv = cookie.split("=")
-        cookie_dict[unquote_plus(kv[0].strip())] = unquote_plus(kv[1].strip())
+        cookie_dict[kv[0].strip()] = kv[1].strip()
     return cookie_dict
 
 
@@ -555,14 +555,14 @@ def parse_setcookie(string):
     for line in string.split("\r\n"):
         cookie = {}
         lines = line.split(";")
-        cookie["cookie"] = unquote_plus(lines[0])
+        cookie["cookie"] = lines[0]
         for part in lines[1:]: 
             kv = part.split("=")
             #path=/ or httponly 
             if len(kv) == 2 : 
-                cookie[unquote_plus(kv[0])] = unquote_plus(kv[1])
+                cookie[kv[0]] = kv[1]
             else: 
-                cookie[unquote_plus(kv[0])] = True
+                cookie[kv[0]] = True
         cookie_list.append(cookie)
     return cookie_list
 
@@ -910,15 +910,7 @@ def wait_response(remote, header_only=False):
                 normal = cStringIO.StringIO()
                 handle_chunked(cbuf, normal) 
                 cbuf.close() 
-                return header, normal.getvalue()
-        #if we don't know the end, assume HEADER_END
-        if length_unkown and not chunked:
-            entity_end = data.rfind(HEADER_END)
-            if entity_end == (len(data) -4): 
-                break 
-        #Content-Length
-        if cbuf.tell() >= total_length: 
-            break 
+                return header, normal.getvalue() 
         #no more data 
         if ((header.get("Connection") == "close" or
                 header["status"] >= 300 or
@@ -926,6 +918,15 @@ def wait_response(remote, header_only=False):
                 length_unkown and
                 not chunked): 
             break 
+        #Content-Length
+        if cbuf.tell() >= total_length: 
+            break 
+        #if we don't know the end, assume HEADER_END
+        if length_unkown and not chunked:
+            entity_end = data.rfind(HEADER_END)
+            if entity_end == (len(data) -4): 
+                break 
+
     if not header:
         raise socket.error("remote error: %s:%d" % remote.getpeername())
     return header, cbuf.getvalue() 
