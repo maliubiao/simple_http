@@ -78,7 +78,7 @@ default_header = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.152 Safari/537.36"
 }
 
-download_header = {
+download_header = { 
     "Accept": "*/*", 
     "Connection": "Keep-Alive"
 }
@@ -88,6 +88,7 @@ image_header = {
     "Accept-Encoding": "gzip, deflate",
     "Connection": "Keep-Alive",
 }
+
 
 html_header = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -101,8 +102,8 @@ html_header = {
 json_header = {
     "Accept": "application/json,text/javascript,*/*;q=0.01",
     "Accept-Language": "zh,zh-cn;q=0.8,en-us;q=0.5,en;q=0.3",
-    "Connection": "keep-alive",
-    "Content-Type": "application/x-www-form-urlencoded",
+    "Connection": "keep-alive", 
+    "Content-Type": "application/x-www-form-urlencoded", 
     "Cache-Control": "no-cache",
     "User-Agent": "Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36",
     "X-Requested-With": "XMLHttpRequest"
@@ -296,7 +297,7 @@ def generate_complex_post(payload):
 def generate_post(header, payload):
     if isinstance(payload, str):
         return payload
-    elif isinstance(payload, unicode):
+    elif isinstance(payload, unicode): 
         return payload.encode("utf-8") 
     elif isinstance(payload, dict):
         has_file = False
@@ -331,7 +332,7 @@ def quote(url):
             else:
                 result.append(char)
         else:
-            result.extend(["%" + i.encode("hex").upper() for i in char.encode("utf-8")])
+            result.extend(["%" + i.encode("hex").upper() for i in char.encode("utf-8")]) 
     return "".join(result)
 
 
@@ -387,8 +388,8 @@ def generate_url(d):
         ret.append("@")
     if "host" in d:
         ret.append(d["host"])
-    if "port" in d:
-        ret.append(":" + str(d["port"]))
+    if "port" in d: 
+        ret.append(":" + str(d["port"])) 
     if "path" in d:
         if not d["path"].startswith("/"):
             ret.append("/")

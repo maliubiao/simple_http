@@ -6,9 +6,9 @@ import os
 import pdb
 import errno
 import pprint
-import io
+import io 
 import re
-import subprocess
+import subprocess 
 import random
 import struct
 import traceback
@@ -113,15 +113,15 @@ internal_keys = set(("con",
                      "res_cookie",
                      "res_header",
                      "text",
-                     "why",
-                     "ssl",
+                     "why", 
+                     "ssl", 
                      "reason",
                      "header_only"
                      "chunked_idx",
-                     "chunked_b",
+                     "chunked_b", 
                      "socks5_request_message",
                      "socks5_proxy",
-                     "socks5_request_content",
+                     "socks5_request_content", 
                      ))
 
 possible_methods = set(("GET",
@@ -151,15 +151,14 @@ def generate_request(task):
             header = default_header.copy()
         else:
             header = task["header"]
-    else:
+    else: 
         header = default_header.copy() 
-
     host = url_parts["host"]
     if "port" in url_parts:
         port = int(url_parts["port"])
         header["Host"] = "%s:%d" % (host, port)
     else:
-        port = 80
+        port = 80 
         header["Host"] = host 
     if url_parts.get("schema") == "https":
         task["ssl"] = True 
@@ -168,7 +167,6 @@ def generate_request(task):
             task["ssl_mark"] = True
     else:
         task["ssl"] = False 
-
     if "port" in url_parts:
         port = int(url_parts["port"])
     # 没代理
@@ -176,7 +174,7 @@ def generate_request(task):
         del url_parts["schema"]
         del url_parts["host"]
         if "port" in url_parts:
-            del url_parts["port"]
+            del url_parts["port"] 
     else: 
         # 有代理更新, 连接点换成代理
         pd = urlparse(task["proxy"]) 
@@ -191,13 +189,13 @@ def generate_request(task):
             raise Exception("不支持的代理格式") 
         host = pd["host"]
         port = int(pd["port"])
-    # 不处理fragment
+    # 不处理fragment 
     if "fragment" in url_parts:
         del url_parts["fragment"]
     path = generate_url(url_parts)
     method = task.get("method", METHOD_GET).upper()
     if method not in possible_methods:
-        raise ValueError("unsupported method: %s" % method)
+        raise ValueError("unsupported method: %s" % method) 
     if method in ("POST", "PUT"): 
         content = generate_post(header, task["payload"])
         header["Content-Length"] = str(len(content))
@@ -210,9 +208,9 @@ def generate_request(task):
         rl.append("\r\n")
     if method in ("POST", "PUT"):
         rl.append(content)
-    body = "".join(rl)
+    body = "".join(rl) 
     if task.get("socks5_proxy"):
-        task["socks5_request_content"] = body
+        task["socks5_request_content"] = body 
     return (host, port), body
 
 
@@ -262,8 +260,8 @@ def set_dns_buffer(hosts):
         else:
             port = 80
         host = d["host"]
-        start = time.time()
-        ret = safe_dns_request(host, port)
+        start = time.time() 
+        ret = safe_dns_request(host, port) 
         cost = time.time() - start
         if cost > 1:
             print "dns slow query: %s, %s" % (cost, host)
@@ -280,7 +278,7 @@ def auto_redirect(task):
     if not l1:
         log_with_time("redirect without a location: %s" % str(task["url"]))
         return
-    if not l1.startswith("http"):
+    if not l1.startswith("http"): 
         d = urlparse(task["url"])
         if l1.startswith("//"):
             l1 = "%s:%s" % (d["schema"], l1)
@@ -290,7 +288,7 @@ def auto_redirect(task):
             if not d.get("port"):
                 l1 = "%s://%s/%s" % (d["schema"], d["host"], l1)
             else:
-                l1 = "%s://%s:%d/%s" % (d["schema"], d["host"], d["port"], l1)
+                l1 = "%s://%s:%d/%s" % (d["schema"], d["host"], d["port"], l1) 
     log_with_time("redirect to: %s" % l1)
     urlsset = task["urlsset"]
     if l1 in urlsset:
@@ -304,9 +302,9 @@ def auto_redirect(task):
     if not "cookie" in task:
         task["cookie"] = {}
     task["cookie"].update(get_cookie(task["res_cookie"]))
-    task["url"] = l1
+    task["url"] = l1 
     if task.get("patch_redirect"):
-        task = task["patch_redirect"](task)
+        task = task["patch_redirect"](task) 
     insert_task(task)
 
 
@@ -343,10 +341,10 @@ def call_parser(task):
     enc = task["res_header"].get("Content-Encoding")
     text = task["recv"].getvalue()
     task["recv"].truncate(0)
-    task["text"] = text
+    task["text"] = text 
     if text and enc == "gzip":
         task["text"] = zlib.decompress(text, 16 + zlib.MAX_WBITS)
-    elif text and enc == "deflate":
+    elif text and enc == "deflate": 
         task["text"] = zlib.decompress(text, -zlib.MAX_WBITS)
     try:
         task["parser"](task)
@@ -497,7 +495,7 @@ STATUS_FAILED = 0x1 << 6
 STATUS_SEND = 0x1 << 7
 STATUS_RECV = 0x1 << 8
 STATUS_HEADER = 0x1 << 9
-STATUS_DONE = 0x1 << 10
+STATUS_DONE = 0x1 << 10 
 STATUS_SOCKS5_HANDSHAKE = 0x1 << 11
 STATUS_SOCKS5_REQUEST = 0x1 << 12 
 
@@ -526,7 +524,7 @@ def catch_bug(task, why=None):
         con = task["ssl_con"]
     else:
         con = task["con"]
-    if not con:
+    if not con: 
         return 
     try:
         con.close()
@@ -544,7 +542,7 @@ def connect(task, remote):
         reqsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         reqsock.setblocking(0)
         reqfd = reqsock.fileno()
-        ep.register(reqfd, EPOLLIN | EPOLLOUT | EPOLLERR)
+        ep.register(reqfd, EPOLLIN | EPOLLOUT | EPOLLERR) 
     except Exception as e: 
         raise e 
         # fd -> task
@@ -561,8 +559,8 @@ def connect(task, remote):
         reqsock.connect(remote)
     except socket.error as e:
         if e.errno == errno.EINPROGRESS:
-            return
-        reqsock.close()
+            return 
+        reqsock.close() 
         raise e
 
 
@@ -572,14 +570,14 @@ def connect_remote(task):
         remote, content = generate_request(task)
     except KeyError as e:
         log_with_time("generate_request error: %s" % e)
-        pprint.pprint(task)
+        pprint.pprint(task) 
         return 
     if "remote" in task:
         remote = task["remote"]
     if task.get("method", METHOD_GET).lower() == "head":
         task["header_only"] = True
     else:
-        task["header_only"] = False
+        task["header_only"] = False 
     count = 0
     while True:
         try:
@@ -596,7 +594,7 @@ def connect_remote(task):
         task["status"] = STATUS_SEND
     else:
         task["send"].write("\x05\x01\x00")
-        task["status"] = STATUS_SOCKS5_HANDSHAKE
+        task["status"] = STATUS_SOCKS5_HANDSHAKE 
 
 
 def send_remain(task):
@@ -644,7 +642,7 @@ def send_remain_ssl(task):
 def read_to_buffer(task): 
     # 一次把可用数据读出
     con = task["con"]
-    buf = task["recv"]
+    buf = task["recv"] 
     status = 0 
     while True:
         try:
@@ -668,7 +666,7 @@ def handle_read(task):
     if not status:
         return
     elif status < 0:
-        remove_task(task, why="read_to_buffer error")
+        remove_task(task, why="read_to_buffer error") 
         return 
     if task["status"] & STATUS_SOCKS5_HANDSHAKE: 
         val = task["recv"].getvalue()
@@ -700,7 +698,7 @@ def handle_read(task):
     # 找http头并解析
     if task["status"] & STATUS_RECV:
         parse_header(task) 
-    if task["header_only"] and task.get("res_header"):
+    if task["header_only"] and task.get("res_header"): 
         call_parser(task)
         remove_task(task)
         return
@@ -748,7 +746,7 @@ def read_to_buffer_ssl(task):
     return status
 
 
-def handle_read_ssl(task):
+def handle_read_ssl(task): 
     # ssl handshake packet 
     if task["status"] & STATUS_SSL_HANDSHAKE: 
         ssl_do_handshake(task)
@@ -780,7 +778,7 @@ def remote_connected(task):
 
 def ssl_do_handshake(task):
     con = task["ssl_con"]
-    try:
+    try: 
         con.do_handshake() 
         task["status"] = STATUS_RECV
         ep.modify(task["fd"], EPOLLERR | EPOLLOUT | EPOLLIN)
@@ -815,9 +813,10 @@ def event_read(task):
 
 
 def get_socket_error(con):
-    d = con.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR, 4)
+    d = con.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR, 4) 
     code = struct.unpack("i", d)[0]
     return errno.errorcode.get(code, "none")
+
 
 
 
@@ -891,9 +890,10 @@ def clean_tasks(now):
     mark = bisect_left(sorted_tasks,
                        now,
                        find_timeout)
+
     print "mark: %s, tasks: %s" % (mark, len(sorted_tasks)) 
     if not mark and len(sorted_tasks):
-        mark += 1
+        mark += 1 
     for i in range(mark):
         task = sorted_tasks[i][1]
         if on_timeout:
@@ -998,7 +998,7 @@ def preset_dns(task_list):
         if "port" not in d:
             port = 80
         else:
-            port = d["port"]
+            port = d["port"] 
         remote = "%s:%s" % (host, port)
         if remote in dns_buffer:
             continue
@@ -1030,7 +1030,7 @@ def dispatch_tasks(task_list):
     preset_dns(task_list)
     space = config["limit"]
     start_time = time.time()
-    acnt = len(task_list)
+    acnt = len(task_list) 
     for i in task_list: 
         while True:
             random = get_random()
@@ -1066,10 +1066,10 @@ def repeat_tasks(task_list):
             if v["retry"] > config["retry_limit"]:
                 continue
             v["retry"] += 1
-            t = default_copy_func(v)
+            t = default_copy_func(v) 
             ret.append(t)
         if on_failed:
-            on_failed(ret)
+            on_failed(ret) 
         dispatch_tasks(ret)
 
 

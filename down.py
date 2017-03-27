@@ -4,12 +4,12 @@ import pprint
 default = "down.output"
 
 def down(url, output, proxy=""):
-    h, c = simple_http.get(url, proxy=proxy, header=simple_http.download_header)
-    if h["status"] != 200:
+    res = simple_http.get(url, proxy=proxy, header=simple_http.download_header)
+    if res["status"] != 200:
         pprint.pprint(h)
         exit(1)
     f = open(output, "wb+")
-    f.write(c)
+    f.write(res["text"])
     f.close()
 
 if __name__ == "__main__":

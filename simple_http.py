@@ -126,7 +126,7 @@ def generate_request(url, **kwargs):
     if not port in (80, 443):
         header["Host"] = "%s:%d" % (host, port)
     else:
-        header["Host"] = host
+        header["Host"] = host 
     if kwargs.get("method") in (METHOD_PUT, METHOD_POST): 
         content = generate_post(header, kwargs["payload"])
         header["Content-Length"] = str(len(content))
@@ -148,7 +148,7 @@ def generate_request(url, **kwargs):
     if kwargs.get("method") in (METHOD_PUT, METHOD_POST):
         rl.append(content)
     # args for send_http 
-    body = "".join(rl)
+    body = "".join(rl) 
     remote = kwargs.get("remote", (host, port)) 
     return {
         "body": body,
@@ -217,12 +217,12 @@ def parse_header(response):
     status, cookie, header = parse_response_header(data[:idx])
     response.update(status)
     response["cookie"] = cookie
-    response["header"] = header
+    response["header"] = header 
     if "Content-Length" in header: 
         try:
             length = int(header["Content-Length"])
         except ValueError:
-            length = int(header["Content-Length"].split("\n")[0])
+            length = int(header["Content-Length"].split("\n")[0]) 
         if length >= 0:
             response["total_length"] = length
     if header.get("Transfer-Encoding") == "chunked":
@@ -243,7 +243,7 @@ def wait_response(request):
         # remote closed
         if not data:
             break
-        recv.write(data)
+        recv.write(data) 
         if not has_header: 
             header = parse_header(response)
             if not header:
@@ -301,6 +301,7 @@ def send_tcp(sock, message):
         i += count
         if i == len(message):
             break
+
 
 
 def send_http(request):
