@@ -1,10 +1,10 @@
-##简单易用的同步/异步http库
-###安装
+## 简单易用的同步/异步http库
+### 安装
 ```shell
 sudo python setup.py install
 ```
 
-###异步方式
+### 异步方式
 ```shell 
 
 In [21]: def print_it(x):                                                              
@@ -59,7 +59,7 @@ async_http Thu May 21 23:47:58 2015: 'acnt: 1, fcnt: 0, time: 0'
 ```
 
 
-###同步方式
+### 同步方式
 
 ```shell
 In [1]: import simple_http
@@ -99,7 +99,7 @@ Out[7]:
 In [8]: res["text"][:100]
 Out[8]: '<!DOCTYPE html>\n<html lang="en" class="">\n  <head prefix="og: http://ogp.me/ns# fb: http://ogp.me/ns'
 ``` 
-###自动重定向
+### 自动重定向
 ```shell
 In [9]: simple_http.get("http://baidu.com")
 redirect to https://www.baidu.com/
@@ -146,7 +146,7 @@ Out[8]:
  'X-UA-Compatible': 'IE=Edge,chrome=1'}
 ``` 
 
-###使用不同的header
+### 使用不同的header
 默认情况下simple_http使用firefox的User-Agent, 
 ```shell
 myheader = {
@@ -154,33 +154,33 @@ myheader = {
 }
 simple_http.get("https://google.com", header=myheader) 
 ```
-###使用Cookie
+### 使用Cookie
 ```shell
 cookie = {
 	"name": "value"
 }
 simple_http.get("https://github.com", cookie=cookie)
 ```
-###从header里取Cookie用
+### 从header里取Cookie用
 ```shell
 simple_http.get_cookie(res["cookie"]) 
 
 ```
-###GET请求添加参数
+### GET请求添加参数
 ```shell
 query = {
 	"params": "value"
 }
 simple_http.get("https://google.com", query=query) 
 ```
-###POST添加参数
+### POST添加参数
 ```shell
 payload = {
 	"params": "value"
 }
 simple_http.post("https://google.com", payload=payload) 
 ``` 
-###POST里使用文件
+### POST里使用文件
 ```shell
 payload = {
 	"name": open("test", "r")
@@ -188,8 +188,8 @@ payload = {
 simple_http.post("https://google.com", payload=payload)
 ``` 
 
-###使用代理
-####Socks5
+### 使用代理
+#### Socks5
 ```shell 
 In [3]: simple_http.get("https://google.com", proxy='socks5://127.0.0.1:9988')
 redirect to https://www.google.co.jp/?gfe_rd=cr&ei=phuEVfPKEYuT8QfC4YCgBA
@@ -210,7 +210,7 @@ Out[3]:
  'url': 'https://google.com'}
 
 ```
-####http代理
+#### http代理
 ```shell 
 In [3]: simple_http.get("https://google.com", proxy='http://127.0.0.1:9988')
 redirect to https://www.google.co.jp/?gfe_rd=cr&ei=phuEVfPKEYuT8QfC4YCgBA
